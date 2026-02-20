@@ -92,3 +92,54 @@ def combined_ranking(results_df):
     combined_rank = ccs_ranks + phase_ranks
     best_idx = combined_rank.idxmin()
     return best_idx, combined_rank
+
+
+# ---- calabaria Loss Bridge ----
+
+def compute_calibration_loss(
+    model_weekly_incidence,
+    observed_data,
+    log_populations,
+    observed_ccs_params=None,
+    observed_phases=None,
+    phase_mask=None,
+    ccs_weight=0.6,
+    phase_weight=0.4,
+):
+    """Combine CCS + wavelet metrics into a single scalar loss for calabaria TrialResult.
+
+    Parameters:
+        model_weekly_incidence: 2D array (weeks × patches) of simulated weekly incidence
+        observed_data: dict with 'ccs_params' and/or 'phases' from observed data
+        log_populations: log10(population) per patch
+        observed_ccs_params: fitted (x0, k) from observed CCS curve (optional)
+        observed_phases: observed phase differences in radians (optional)
+        phase_mask: boolean mask for valid phase comparisons (optional)
+        ccs_weight: weight for CCS similarity in combined loss (default 0.6)
+        phase_weight: weight for phase similarity in combined loss (default 0.4)
+
+    Returns:
+        float: combined scalar loss (lower is better), suitable for TrialResult(loss=...)
+    """
+    loss = 0.0
+    total_weight = 0.0
+
+    if observed_ccs_params is not None:
+        prop_zero = np.mean(model_weekly_incidence == 0, axis=0)
+        try:
+            sim_params = fit_mean_var(log_populations, prop_zero)
+            ccs_loss = similarity_metric(observed_ccs_params, sim_params)
+            loss += ccs_weight * ccs_loss
+            total_weight += ccs_weight
+        except RuntimeError:
+            # curve_fit failed — assign high penalty
+            loss += ccs_weight * 1e6
+            total_weight += ccs_weight
+
+    if observed_phases is not None and phase_mask is not None:
+        loss += phase_weight * phase_similarity(observed_phases, np.zeros_like(observed_phases), phase_mask)
+        total_weight += phase_weight
+
+    if total_weight > 0:
+        return loss / total_weight
+    return float("inf")

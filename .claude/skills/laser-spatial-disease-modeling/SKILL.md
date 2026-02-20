@@ -1,6 +1,15 @@
 ---
 name: laser-spatial-disease-modeling
-description: This skill should be used for building spatial disease transmission models using the LASER (Light Agent Spatial modeling for ERadication) framework (v1.0.0+). This skill is appropriate when the user asks to model disease spread across geographic populations, simulate measles or other SEIR-type diseases with spatial coupling, calibrate compartmental models against historical data, perform wavelet analysis of disease time series, set up gravity-model migration networks, or reproduce spatial epidemiological phenomena like traveling waves and critical community size. Trigger phrases include "LASER model", "spatial disease model", "measles England Wales", "gravity model transmission", "SEIR spatial simulation", "wavelet phase analysis", "critical community size", or "calibrate epidemic model".
+description: This skill should be used for building spatial disease transmission
+  models using the LASER (Light Agent Spatial modeling for ERadication) framework
+  (v1.0.0+). This skill is appropriate when the user asks to model disease spread
+  across geographic populations, simulate SEIR-type diseases with spatial coupling,
+  set up gravity-model migration networks, wrap LASER models as BaseModel for
+  calabaria calibration, or reproduce spatial epidemiological phenomena like
+  traveling waves and critical community size. Trigger phrases include "LASER model",
+  "spatial disease model", "gravity model transmission", "SEIR spatial simulation",
+  "wavelet phase analysis", "critical community size", "build SEIR model",
+  "wrap model as BaseModel", or "LASER BaseModel".
 ---
 
 # Spatial Disease Transmission Modeling with LASER
@@ -251,56 +260,102 @@ model.run("Simulation")
 
 ---
 
-### Step 7: Calibration
+### Step 7: Wrap as BaseModel for Calibration
 
-Random parameter sampling with two fitness metrics. Reusable metric functions are in `scripts/calibration_metrics.py`.
+After building and testing the LASER model (Steps 1-6), wrap it inside calabaria's `BaseModel` for structured calibration, scenario management, and cloud scaling.
 
-#### Parameter Ranges
+**Why:** calabaria provides structured parameter spaces (with bounds and transforms), Optuna-based optimization (ask/tell loop), scenario management (`@model_scenario`), and optional cloud scaling via modelops.
 
-| Parameter | Range | Description |
-|-----------|-------|-------------|
-| `beta` | U(3, 4.5) | Transmission rate (R0 ~ 24-36) |
-| `amplitude` | U(0.5, 1.5) | Seasonal forcing multiplier |
-| `k` | 10^U(-3.5, -1) | Gravity coupling constant (log-uniform) |
-| `b` | U(0.25, 1.0) | Destination population exponent |
-| `c` | U(1, 2) | Distance decay exponent |
+**Install:** `pip install modelops-calabaria`
 
-**Metric 1 - CCS Similarity**: Logistic curve fit to proportion of zero-incidence weeks vs. log10(population). The `fit_mean_var()` and `similarity_metric()` functions in `scripts/calibration_metrics.py` handle this.
+#### Bridge Pattern: LASER Model inside BaseModel
 
-**Metric 2 - Wavelet Phase Similarity**: Cross-wavelet phase differences from a reference city detect traveling waves. Full implementation in `references/wavelet_analysis.md`.
+```python
+from calabaria import BaseModel, model_output, model_scenario, ScenarioSpec
+from calabaria.parameters import ParameterSpace, ParameterSpec
+from calabaria.parameters import ConfigurationSpace, ConfigSpec
 
-**Combined Ranking**: Sum of CCS and phase similarity ranks; the lowest combined rank identifies the best-fit simulation.
+class MySpatialSEIR(BaseModel):
+    PARAMS = ParameterSpace([
+        ParameterSpec("beta", lower=2.0, upper=6.0, kind="float", doc="..."),
+        ParameterSpec("gravity_k", lower=1e-4, upper=0.1, kind="float", doc="..."),
+        # ... additional uncertain parameters
+    ])
+    CONFIG = ConfigurationSpace([
+        ConfigSpec("nticks", default=7300, doc="Simulation duration (days)"),
+        # ... additional fixed settings
+    ])
+
+    def __init__(self, scenario_gdf, distances, birthrates, pyramid):
+        super().__init__()
+        self.scenario_gdf = scenario_gdf
+        # ... store pre-built data from Steps 1-5
+
+    def build_sim(self, params, config):
+        # Construct LASER Model + PropertySet + gravity network + seasonality
+        # + components using params and config values
+        return model  # LASER Model object
+
+    def run_sim(self, state, seed):
+        laser.core.random.seed(seed)
+        state.run()
+
+    @model_output("weekly_incidence")
+    def weekly_incidence(self, state):
+        # Extract post-burn-in weekly incidence → pl.DataFrame
+        ...
+```
+
+A complete disease-agnostic template is in `scripts/laser_basemodel.py`. Customize the component list, parameter ranges, and output extractors for your disease.
+
+**Next step:** Use the `modelops-calabaria` skill for calibration workflow (Sobol sweeps, Optuna optimization, scenario analysis).
 
 ---
 
-### Step 8: Analyze Results
+### Step 8: Quick Verification Run
 
-Weekly incidence aggregation and proportion of zero-incidence weeks (after burn-in) are the primary outputs:
+Before calibration, verify the wrapped model produces sensible output with a single test run:
 
 ```python
-incidence = model.nodes.newly_infected
-num_weeks = incidence.shape[0] // 7
-weekly_incidence = incidence[:num_weeks*7, :].reshape(
-    num_weeks, 7, incidence.shape[1]
-).sum(axis=1)
-prop_zero = np.mean(weekly_incidence[1040:, :] == 0, axis=0)  # After 20-year burn-in
+model = MySpatialSEIR(scenario_gdf, distances, birthrates, pyramid)
+
+# Run with plausible parameter values
+outputs = model.simulate(
+    {"beta": 3.5, "gravity_k": 0.01, "gravity_b": 0.5,
+     "gravity_c": 1.5, "seasonal_amplitude": 1.0},
+    seed=42,
+)
+
+# Check outputs
+print(outputs["weekly_incidence"].head())
+print(f"Total cases: {outputs['weekly_incidence']['cases'].sum()}")
+
+# Verify non-zero incidence and spatial variation
+by_patch = outputs["weekly_incidence"].group_by("patch").agg(
+    pl.col("cases").sum()
+)
+print(by_patch)
 ```
+
+If total cases are zero or all patches are identical, revisit Steps 3-6 (seasonal forcing, gravity network, initial conditions).
 
 ---
 
 ## Key Concepts
 
-- **Critical Community Size (CCS)**: The minimum population for sustained endemic transmission without stochastic fadeout. For measles, approximately 300,000-500,000.
+- **Critical Community Size (CCS)**: The minimum population for sustained endemic transmission without stochastic fadeout. Disease-specific (e.g., ~300K-500K for measles).
 - **Traveling Waves**: Epidemics propagate from large cities to smaller populations, producing distance-dependent phase lags in wavelet analysis.
 - **Gravity Model**: Spatial coupling scales with destination population and inversely with distance. The `a=0` convention means source population does not affect outward flow.
-- **Seasonal Forcing**: School-term-driven transmission oscillations captured as 26 biweekly log-beta values from Bjornstad et al. (2002).
+- **Seasonal Forcing**: Transmission oscillations driven by climate, behavior, or school terms. See Step 4 for general recipe.
+- **BaseModel Bridge**: Wrapping a LASER Model inside calabaria's `BaseModel` enables structured calibration via Optuna, scenario management, and cloud scaling.
 
 ---
 
 ## Bundled Resources
 
 - **`scripts/custom_components.py`** - `Importation` (susceptible-targeted seeding), `VaccinationCampaign` (correct state-based vaccination with correlated missedness), and `SeasonalTransmission` (advanced customization example) component classes
-- **`scripts/calibration_metrics.py`** - CCS logistic fitting, wavelet phase similarity scoring, and combined ranking functions
+- **`scripts/calibration_metrics.py`** - CCS logistic fitting, wavelet phase similarity scoring, combined ranking, and `compute_calibration_loss()` bridge for calabaria `TrialResult`
+- **`scripts/laser_basemodel.py`** - Disease-agnostic `SpatialSEIRModel(BaseModel)` template for wrapping LASER models for calabaria calibration
 - **`references/laser_api_reference.md`** - Complete LASER v1.0.0 API documentation (Model, LaserFrame, PropertySet, all component variants, vital dynamics, migration models, distributions)
 - **`references/wavelet_analysis.md`** - Wavelet transform functions, phase difference computation, and traveling wave detection workflow
 
@@ -315,7 +370,7 @@ prop_zero = np.mean(weekly_incidence[1040:, :] == 0, axis=0)  # After 20-year bu
 5. **No spatial structure**: `model.network` may be all zeros. Verify `gravity_k` is non-trivially small (try 0.001–0.1).
 6. **Out of memory**: Reduce `capacity_safety_factor` or `nticks`. Each agent consumes memory for all state arrays.
 7. **Wavelet NaN**: Time series with insufficient non-zero values should be padded using `pad_data()` from the wavelet reference.
-8. **Poor calibration fits**: Parameter ranges may need widening, or the burn-in period (10+ years recommended) may be insufficient.
+8. **BaseModel `model_output` returns wrong type**: All `@model_output` methods must return `pl.DataFrame`. Use `polars`, not numpy arrays or pandas.
 
 ---
 
