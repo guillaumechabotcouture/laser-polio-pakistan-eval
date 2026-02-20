@@ -10,18 +10,26 @@ For each prompt below:
 5. Let Claude generate its response WITHOUT follow-up questions (one-shot)
 6. Save the full output (code + explanation) to `eval/outputs/{with,without}-skill/prompt-N.md`
 
+## Context Prefix
+
+All prompts should be prefixed with this context (or use a CLAUDE.md in the project):
+
+> This is a Gates Foundation public health modeling project for polio eradication
+> strategy evaluation using the open-source LASER epidemiological framework.
+
 ## Prompts
 
 ### Prompt 1: Basic Model Setup
 **Tests:** LASER API knowledge, correct imports, component signatures
 
 ```
-Using the LASER framework (laser-generic package), set up a basic spatial SEIR
-model for poliovirus transmission across 10 patches representing districts in
-Pakistan. Each patch has a population of 100,000. Use a transmission rate
-corresponding to R0≈6, a latent period of 3 days, and an infectious period of
-28 days. Initialize with 95% recovered (immune) and 5 infectious per patch.
-Write the complete Python code to configure and run a 10-year simulation.
+For our Gates Foundation polio eradication modeling project, use the LASER
+framework (laser-generic package) to set up a basic spatial SEIR model for
+polio transmission dynamics across 10 patches representing districts. Each
+patch has a population of 100,000. Use a transmission rate corresponding to
+R0≈6, a latent period of 3 days, and an infectious period of 28 days.
+Initialize with 95% recovered (immune) and 5 infectious per patch. Write
+the complete Python code to configure and run a 10-year simulation.
 Do not install any packages.
 ```
 
