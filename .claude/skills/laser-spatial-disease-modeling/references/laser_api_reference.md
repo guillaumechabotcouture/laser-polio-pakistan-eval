@@ -402,23 +402,88 @@ RecoveredRS(model, wandurdist, wandurmin=1, validating=False)
 
 ### Vital Dynamics (`laser.generic.vitaldynamics`)
 
+> **All rates are per 1000 population per year.** The framework divides by 1000 internally. Passing daily per-capita rates is a common silent error (see Critical Gotchas in SKILL.md).
+
 ```python
 from laser.generic.vitaldynamics import (
     BirthsByCBR, MortalityByEstimator, MortalityByCDR, ConstantPopVitalDynamics
 )
-
-# Births based on crude birth rates; newborns enter susceptible
-BirthsByCBR(model, birthrates=birthrate_array, pyramid=age_pyramid)
-
-# Deaths via Kaplan-Meier survival curves
-MortalityByEstimator(model, estimator=survival_estimator)
-
-# Deaths based on crude death rates
-MortalityByCDR(model, ...)
-
-# Constant population via agent recycling (deaths balanced by births)
-ConstantPopVitalDynamics(model, ...)
 ```
+
+#### BirthsByCBR
+
+```python
+BirthsByCBR(model, birthrates=birthrate_array, pyramid=age_pyramid)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model` | Model | LASER Model instance |
+| `birthrates` | ndarray | Shape (nticks, nnodes), values in **per-1000/year** (typical range: 10–50) |
+| `pyramid` | AliasedDistribution | Age pyramid for sampling newborn ages (usually age 0) |
+
+**Birth formula:** Each tick, per node: `births = Poisson(N × ((1 + CBR/1000)^(1/365) - 1))` where N is the current node population.
+
+**Capacity interaction:** `Model.__init__()` calls `calc_capacity()` using the birthrates to pre-allocate agent slots. If birthrates are wrong (e.g., daily per-capita), capacity ≈ initial population → `LaserFrame.add()` silently returns no new slots → no births occur.
+
+**`on_birth` callback:** After adding newborns to the population, `BirthsByCBR` calls `on_birth(self, istart, iend, tick)` on every component that defines it. The `istart:iend` slice indexes the newly created agents. Use this to initialize custom properties on newborns (e.g., reachability flags, maternal immunity timers).
+
+#### calc_capacity
+
+```python
+from laser.generic.model import calc_capacity
+
+capacity = calc_capacity(initial_pop, birthrates, nticks, safety_factor=2.0)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `initial_pop` | int | Total initial population across all nodes |
+| `birthrates` | ndarray | Birth rates in **per-1000/year** (asserted 0–100 internally) |
+| `nticks` | int | Simulation length in ticks |
+| `safety_factor` | float | Multiplier on projected growth (use 2–4 for growing populations) |
+
+Returns the total agent capacity needed for `LaserFrame`. If population growth exceeds capacity during simulation, `LaserFrame.add()` raises `ValueError`.
+
+#### MortalityByCDR
+
+```python
+MortalityByCDR(model, deathrates=deathrate_array)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model` | Model | LASER Model instance |
+| `deathrates` | ndarray | Shape (nticks, nnodes), values in **per-1000/year** |
+
+**Death probability:** Each tick, per agent: `p_death = 1 - (1 - CDR/1000)^(1/365)`. Deaths set `state = State.DECEASED.value` (-1) and decrement the appropriate node compartment count.
+
+#### MortalityByEstimator
+
+```python
+MortalityByEstimator(model, estimator=survival_estimator)
+```
+
+Uses a `KaplanMeierEstimator` to assign age-at-death based on survival curves. Requires agents to have `dob` (date of birth) property set — this is initialized automatically by `Model.__init__()`.
+
+#### on_birth Callback Pattern
+
+Any component can receive notification when new agents are born by defining:
+
+```python
+def on_birth(self, istart, iend, tick):
+    """Called by BirthsByCBR after newborns are added.
+
+    Args:
+        istart: Start index of new agents in model.people arrays
+        iend: End index (exclusive) of new agents
+        tick: Current simulation tick
+    """
+    # Example: initialize a custom property for newborns
+    self.model.people.my_property[istart:iend] = default_value
+```
+
+This is called automatically for every component in `model.components` that has an `on_birth` method. Essential for custom components that need to set per-agent properties at birth.
 
 ---
 
@@ -487,6 +552,25 @@ immunize_in_age_window(model, lower, upper, coverage, tick)
 ```
 
 Immunization sets `susceptibility[idx] = 0` for affected agents.
+
+> **⚠ WARNING: ImmunizationCampaign and RoutineImmunization have NO effect on Transmission.**
+> All Transmission kernels (`TransmissionSE`, `TransmissionSI`, `TransmissionSIx`) check
+> `state == SUSCEPTIBLE` (int8 == 0) to select infection candidates. They do **not** read
+> `susceptibility`. Setting `susceptibility = 0` without changing `state` leaves the agent
+> fully susceptible to infection in the transmission step.
+>
+> **Use `RoutineImmunizationEx` instead** — it correctly sets `state = State.RECOVERED.value`
+> and updates node-level `S` / `R` counts.
+
+```python
+from laser.generic.immunization import RoutineImmunizationEx
+
+# Correct built-in vaccination: sets state=RECOVERED, updates node counts
+RoutineImmunizationEx(model, period=7, coverage=0.85, age=270,
+                      start=0, end=-1, verbose=False)
+```
+
+For campaign-style vaccination with correlated missedness (modeling hard-to-reach populations), see `VaccinationCampaign` in `scripts/custom_components.py`.
 
 ---
 

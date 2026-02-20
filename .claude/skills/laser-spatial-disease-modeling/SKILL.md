@@ -13,6 +13,37 @@ The LASER framework (v1.0.0+, December 2025) enables spatially-explicit, agent-b
 
 ---
 
+## Critical Gotchas
+
+### Rate Units: Per-1000/Year (Not Daily Per-Capita)
+
+`BirthsByCBR`, `MortalityByCDR`, and `ConstantPopVitalDynamics` expect rates in **per-1000 population per year**. They divide by 1000 internally. If you pass pre-converted daily per-capita rates (e.g., 0.00008 instead of 30):
+
+- `calc_capacity()` sees near-zero growth → capacity ≈ initial population
+- `LaserFrame.add()` has no free slots → **no births occur**
+- The model still runs and produces plausible-looking results from the initial susceptible pool
+- **This is a silent failure** — no error is raised
+
+**Sanity check** (add before model construction):
+```python
+assert np.all(birthrates >= 1) and np.all(birthrates <= 60), \
+    f"Birthrates must be per-1000/year (typical range 10-50), got {birthrates.min():.4f}-{birthrates.max():.4f}"
+```
+
+### Vaccination: State vs. Susceptibility
+
+`ImmunizationCampaign` and `RoutineImmunization` set `susceptibility = 0`, but **all Transmission kernels** (`TransmissionSE`, `TransmissionSI`, `TransmissionSIx`) only check `state == SUSCEPTIBLE` (int8 == 0). They do **not** check `susceptibility`.
+
+**Result:** Built-in vaccination via these classes has **zero effect on transmission**.
+
+**Correct approach:** Vaccination must set `state = State.RECOVERED.value` (3) and update `nodes.S` / `nodes.R` counts. Use either:
+- `RoutineImmunizationEx` (built-in, sets state correctly)
+- The `VaccinationCampaign` class in `scripts/custom_components.py` (supports correlated missedness)
+
+> **Do NOT use** `ImmunizationCampaign` or `RoutineImmunization` if you need vaccination to actually reduce transmission.
+
+---
+
 ## Workflow
 
 ### Step 1: Environment Setup and Data Loading
@@ -128,6 +159,27 @@ beta_season = np.append(beta_season, beta_season[-1])
 beta_season = np.exp(beta_season - np.mean(beta_season))
 ```
 
+#### Generalizing Seasonal Forcing
+
+The Bjornstad profile above is one example of **school-term-driven forcing**. Other transmission contexts require different seasonal shapes:
+
+- **Climate-driven forcing** (warm/wet season peak): Cosine or piecewise profiles centered on peak transmission month
+- **Behavioral forcing** (school terms, holiday travel): Step functions or smoothed term profiles
+- **No seasonality**: `ValuesMap.from_scalar(1.0, nticks, nnodes)`
+
+**General recipe:** Build a 365-day multiplier array, normalize to `mean == 1.0`, tile across nticks, and wrap in a `ValuesMap`:
+
+```python
+# Example: peaked-season profile (peak at day 200, amplitude 0.3)
+days = np.arange(365)
+peak_day = 200
+season_365 = 1.0 + 0.3 * np.cos(2 * np.pi * (days - peak_day) / 365)
+season_365 /= season_365.mean()  # Normalize to mean == 1.0
+
+season_tiled = np.tile(season_365, nticks // 365 + 1)[:nticks]
+seasonality = ValuesMap.from_timeseries(season_tiled, nnodes)
+```
+
 ---
 
 ### Step 5: Gravity Migration Network
@@ -178,6 +230,8 @@ season_tiled = np.tile(beta_season, nticks // 365 + 1)[:nticks]
 seasonality = ValuesMap.from_timeseries(season_tiled, nnodes)
 
 model = Model(scenario, parameters, birthrates=birthrate_map.values)
+# NOTE: birthrate_map.values must be per-1000/year (typical range 10-50).
+# Same for deathrates if using MortalityByCDR. See Critical Gotchas.
 model.components = [
     SEIR.Susceptible(model),
     SEIR.Exposed(model, expdurdist, infdurdist),
@@ -187,6 +241,9 @@ model.components = [
     SEIR.Transmission(model, expdurdist, seasonality=seasonality),
     BirthsByCBR(model, birthrates=birthrate_map.values, pyramid=pyramid),
     MortalityByEstimator(model, estimator=survival),
+    # Vaccination options (do NOT use ImmunizationCampaign — see Critical Gotchas):
+    # RoutineImmunizationEx(model, period=7, coverage=0.85, age=270),
+    # VaccinationCampaign(model, period=180, coverage=coverage_array),
 ]
 # Set up gravity network (Step 5) then:
 model.run("Simulation")
@@ -242,7 +299,7 @@ prop_zero = np.mean(weekly_incidence[1040:, :] == 0, axis=0)  # After 20-year bu
 
 ## Bundled Resources
 
-- **`scripts/custom_components.py`** - `Importation` (susceptible-targeted seeding) and `SeasonalTransmission` (advanced customization example) component classes
+- **`scripts/custom_components.py`** - `Importation` (susceptible-targeted seeding), `VaccinationCampaign` (correct state-based vaccination with correlated missedness), and `SeasonalTransmission` (advanced customization example) component classes
 - **`scripts/calibration_metrics.py`** - CCS logistic fitting, wavelet phase similarity scoring, and combined ranking functions
 - **`references/laser_api_reference.md`** - Complete LASER v1.0.0 API documentation (Model, LaserFrame, PropertySet, all component variants, vital dynamics, migration models, distributions)
 - **`references/wavelet_analysis.md`** - Wavelet transform functions, phase difference computation, and traveling wave detection workflow
@@ -251,11 +308,14 @@ prop_zero = np.mean(weekly_incidence[1040:, :] == 0, axis=0)  # After 20-year bu
 
 ## Troubleshooting
 
-1. **Out of memory**: The `capacity_safety_factor` parameter or `nticks` should be reduced. Each agent consumes memory for state arrays.
-2. **All epidemics die out**: The `beta` or `importation_count` values may be too low, or initial `I` may be zero in some patches.
-3. **No spatial structure**: The `model.network` matrix may be all zeros. The `gravity_k` value should be verified as non-trivially small.
-4. **Wavelet NaN**: Time series with insufficient non-zero values should be padded using `pad_data()` from the wavelet reference.
-5. **Poor calibration fits**: Parameter ranges may need widening, or the burn-in period (10+ years recommended) may be insufficient.
+1. **No births occurring / population static**: Birthrates are likely in wrong units. Must be **per-1000/year** (typical range 10–50). Check with: `assert np.all(birthrates >= 1) and np.all(birthrates <= 60)`. Also verify `capacity_safety_factor` ≥ 2 — if capacity equals initial population, `LaserFrame.add()` silently returns no new slots.
+2. **`ValueError` from `LaserFrame.add()`**: Population growth exceeded pre-allocated capacity. Increase `capacity_safety_factor` (try 3–4 for high-growth populations or long simulations).
+3. **Vaccination has no effect on transmission**: `ImmunizationCampaign` / `RoutineImmunization` only set `susceptibility = 0`, which Transmission kernels ignore. Use `RoutineImmunizationEx` or `VaccinationCampaign` (custom) which set `state = RECOVERED`.
+4. **All epidemics die out**: `beta` or `importation_count` may be too low, or initial `I` may be zero in some patches. Verify importation is active during burn-in period.
+5. **No spatial structure**: `model.network` may be all zeros. Verify `gravity_k` is non-trivially small (try 0.001–0.1).
+6. **Out of memory**: Reduce `capacity_safety_factor` or `nticks`. Each agent consumes memory for all state arrays.
+7. **Wavelet NaN**: Time series with insufficient non-zero values should be padded using `pad_data()` from the wavelet reference.
+8. **Poor calibration fits**: Parameter ranges may need widening, or the burn-in period (10+ years recommended) may be insufficient.
 
 ---
 
