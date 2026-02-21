@@ -1,0 +1,23 @@
+For our Gates Foundation guinea worm eradication modeling project, use the LASER
+framework (laser-generic package) to set up a spatial disease model for guinea
+worm (Dracunculus medinensis) transmission in Chad. Key disease biology:
+
+- Guinea worm confers NO lasting immunity — recovered individuals return to
+  susceptible (use SEIS dynamics, not SEIR)
+- Pre-patent period: 10-14 months (from copepod ingestion to worm emergence)
+- Infectious period: 2-4 weeks (during worm emergence through skin)
+- R0 ≈ 1.5-2 (low, water-mediated transmission through copepods)
+- Transmission is water-mediated: infected hosts enter water sources, release
+  larvae, copepods ingest larvae, new hosts drink contaminated water
+
+Model 8 patches representing endemic districts in southern Chad. Track two
+host populations: humans (total ~2M across patches, range 100k-500k per
+district) and dogs (~200K total, range 10k-50k per district), since dogs are
+the dominant reservoir in Chad (~95% of detected infections are in dogs).
+
+Initialize in a near-elimination state reflecting current conditions: seed
+2 infected humans and 50 infected dogs nationally, distributed across the
+3 most endemic patches. All others susceptible.
+
+Write complete Python code to run a 5-year simulation. Output annual case
+counts for both species. Do not install any packages.

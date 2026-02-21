@@ -1,0 +1,31 @@
+Design a calibration framework for the guinea worm LASER model using real
+surveillance data from the Carter Center's Guinea Worm Eradication Program
+in Chad:
+
+Observed annual data (human cases / dog infections):
+- 2018: 17 / 1,040
+- 2019: 48 / 1,935
+- 2020: 12 / 1,507
+- 2021: 14 / 830
+- 2022: 13 / 688
+- 2023: 6 / 526
+
+The calibration should:
+1. Match total annual human cases and dog infections using log-scale
+   comparison (appropriate for small counts)
+2. Reproduce the ~50:1 to 100:1 dog-to-human infection ratio
+3. Capture the declining trend in both species reflecting intervention
+   scale-up over this period
+4. Account for spatial concentration: cases cluster in 3-4 of 8 districts
+   (Chari-Baguirmi, Moyen-Chari, Salamat, Mandoul)
+
+Sample from parameter ranges:
+- beta_human: U(0.0005, 0.005)
+- beta_dog: U(0.005, 0.05)
+- cross_species_coupling: U(0.05, 0.5)
+- seasonal_amplitude: U(0.3, 0.8)
+- containment_efficacy: U(0.5, 0.9)
+
+Use a multi-objective fitness function with appropriate weighting for the
+different targets. Write the calibration loop and scoring functions using
+LASER framework conventions. Do not install any packages.

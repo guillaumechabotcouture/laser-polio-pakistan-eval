@@ -1,0 +1,24 @@
+Add prevention-based interventions to the guinea worm LASER model. No vaccine
+exists for guinea worm — all control relies on breaking the water transmission
+cycle:
+
+1. ABATE (temephos) larvicide: Applied monthly to known water sources during
+   transmission season, kills copepods, reduces water-source transmission by
+   80% in treated areas. Coverage varies by district (20-80%).
+
+2. Cloth/pipe water filters: Distributed to households, removes copepods from
+   drinking water. Current adoption ~60% nationally, each filter reduces
+   individual ingestion risk by 95%.
+
+3. Case containment: When a worm emerges, the case is detected and the patient
+   is prevented from entering water sources for the ~30-day emergence period.
+   70% of human cases are successfully contained, reducing their contribution
+   to water contamination by 90%.
+
+4. Dog tethering/management: 50% of villages with known dog infections tether
+   infected dogs to prevent water access during worm emergence, reducing
+   dog-to-water transmission by 85%.
+
+Show the complete component setup using LASER's framework. These must work
+with SEIS dynamics (recovered individuals return to susceptible, since there
+is no lasting immunity to guinea worm). Do not install any packages.

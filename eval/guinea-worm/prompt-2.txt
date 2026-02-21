@@ -1,0 +1,25 @@
+Extend the guinea worm LASER model to include realistic transmission dynamics:
+
+1. Water-source mediated transmission: Guinea worm spreads when infected hosts
+   enter stagnant water to soothe emerging worms, releasing larvae that are
+   ingested by copepods, which are then consumed by new hosts drinking
+   unfiltered water. Model spatial coupling based on shared water sources —
+   neighboring districts share seasonal ponds and rivers, with coupling
+   strength decaying with distance (exponent c=2.0, destination population
+   exponent b=0.3)
+
+2. Dry-season transmission forcing: Stagnant pools during Chad's dry season
+   (Oct-May) concentrate copepods and increase transmission. Peak transmission
+   Jan-Mar at 1.8x baseline, declining through Apr-May. Rainy season (Jun-Sep)
+   at 0.4x baseline as flowing water dilutes copepod density and disperses
+   larvae.
+
+3. Cross-host transmission via shared water sources: Dogs and humans
+   contaminate the same water bodies. In Chad, dog infections drive the
+   epidemic (~95% of cases), so dog-to-water-to-human transmission is
+   critical. Use asymmetric cross-species coupling reflecting dogs' higher
+   contribution.
+
+Maintain SEIS dynamics (no lasting immunity — recovered hosts return to
+susceptible). Write complete Python code using the LASER framework.
+Do not install any packages.

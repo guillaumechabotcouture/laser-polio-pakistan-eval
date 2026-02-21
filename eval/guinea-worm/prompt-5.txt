@@ -1,0 +1,42 @@
+Build a complete spatial guinea worm transmission model for Chad using the
+LASER framework with these specifications:
+
+Disease dynamics:
+- SEIS (no lasting immunity — guinea worm confers no acquired immunity,
+  recovered individuals return to susceptible)
+- Humans: R0≈1.5, 365-day pre-patent period, 21-day worm emergence
+- Dogs: R0≈2.5, 365-day pre-patent period, 21-day worm emergence
+- Water-source mediated transmission (not direct contact — larvae released
+  into water, ingested via copepods)
+- Cross-species coupling via shared water sources (asymmetric: dogs are
+  the dominant reservoir, ~95% of infections)
+
+Spatial structure:
+- 8 districts in the endemic corridor with heterogeneous populations
+  (human/dog): Chari-Baguirmi (450k/40k), Moyen-Chari (400k/35k),
+  Salamat (350k/30k), Mandoul (300k/25k), Logone Oriental (250k/20k),
+  Tandjile (200k/15k), Mayo-Kebbi Est (150k/10k), Lac (100k/5k)
+- Gravity-model spatial coupling representing shared water source networks
+
+Seasonality:
+- Dry-season peak (Jan-Mar at 1.8x, rainy season Jun-Sep at 0.4x)
+
+Interventions (all prevention-based, no vaccine exists):
+- ABATE larvicide: starts at 30% coverage year 1, increases 10%/year to
+  max 90%
+- Filter distribution: starts at 40%, increases 10%/year to max 90%
+- Case containment: 70% efficacy, improving 3%/year
+- Dog tethering: 40% coverage, increasing 5%/year
+
+Initial conditions (near-elimination context):
+- Seed 5 infected humans and 200 infected dogs in the 3 most endemic
+  districts (Chari-Baguirmi, Moyen-Chari, Salamat)
+- Importation: 1 infected human traveler every 90 days for first 3 years
+
+Simulation:
+- 10-year simulation
+- Output: annual human cases and dog infections per district
+- Track whether elimination (zero cases for 3 consecutive years) is
+  achieved and when
+
+Write complete, runnable Python code. Do not install any packages.
