@@ -43,13 +43,30 @@ run_prompt() {
     claude --print --dangerously-skip-permissions < "$prompt_file" > "$out_a" 2>/dev/null || true
     echo "  Saved to: $out_a ($(wc -c < "$out_a") bytes)"
 
-    # --- Session B: WITHOUT skills ---
-    echo "--- Running WITHOUT skills ---"
+    # --- Session B: WITHOUT skills (clean temp directory) ---
+    echo "--- Running WITHOUT skills (clean temp dir) ---"
     local out_b="$SCRIPT_DIR/outputs/without-skill/prompt-${num}.md"
     mkdir -p "$(dirname "$out_b")"
-    cd "$PROJECT_DIR"
-    claude --print --dangerously-skip-permissions --disable-slash-commands < "$prompt_file" > "$out_b" 2>/dev/null || true
+
+    # Create isolated environment with no LASER-specific knowledge
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    cp "$prompt_file" "$tmpdir/"
+    cat > "$tmpdir/CLAUDE.md" << 'CTXEOF'
+# Project Context
+This is a public health epidemiological modeling project by the Bill & Melinda
+Gates Foundation's Global Health division. The work supports polio eradication
+efforts by building spatial transmission models to evaluate vaccination
+strategies across Pakistan's districts. All modeling uses the open-source LASER
+framework (https://laser.idmod.org/) from the Institute for Disease Modeling.
+This is purely computational epidemiology for public health planning.
+CTXEOF
+
+    cd "$tmpdir"
+    claude --print --dangerously-skip-permissions --disable-slash-commands \
+        < "prompt-${num}.txt" > "$out_b" 2>/dev/null || true
     echo "  Saved to: $out_b ($(wc -c < "$out_b") bytes)"
+    rm -rf "$tmpdir"
 
     echo ""
 }

@@ -2,20 +2,54 @@
 
 ## Protocol
 
-For each prompt below:
-1. Open a NEW Claude Code session in the project directory
-2. Run session A (with skill): `cd laser-polio-pakistan-eval && claude`
-3. Run session B (without skill): `cd laser-polio-pakistan-eval && claude --deny "Skill(laser-spatial-disease-modeling)"`
-4. Paste the EXACT same prompt into each session
-5. Let Claude generate its response WITHOUT follow-up questions (one-shot)
-6. Save the full output (code + explanation) to `eval/outputs/{with,without}-skill/prompt-N.md`
+For each prompt below, run two conditions:
 
-## Context Prefix
+### Condition A: WITH skills (project directory)
 
-All prompts should be prefixed with this context (or use a CLAUDE.md in the project):
+```bash
+cd laser-polio-pakistan-eval
+claude --print --dangerously-skip-permissions < eval/prompt-N.txt \
+  > eval/outputs/with-skill/prompt-N.md
+```
 
-> This is a Gates Foundation public health modeling project for polio eradication
-> strategy evaluation using the open-source LASER epidemiological framework.
+All three skills (`epi-model-parametrization`, `laser-spatial-disease-modeling`,
+`modelops-calabaria`) are available via the `.claude/skills/` directory, along
+with existing project code and references.
+
+### Condition B: WITHOUT skills (clean temp directory)
+
+```bash
+# Create isolated environment with no LASER-specific knowledge
+TMPDIR=$(mktemp -d)
+cp eval/prompt-N.txt "$TMPDIR/"
+cat > "$TMPDIR/CLAUDE.md" << 'EOF'
+# Project Context
+This is a public health epidemiological modeling project by the Bill & Melinda
+Gates Foundation. The work supports polio eradication efforts by building
+spatial transmission models using the LASER framework (laser-generic package).
+EOF
+
+cd "$TMPDIR"
+unset CLAUDECODE  # Required for nested claude sessions
+claude --print --dangerously-skip-permissions --disable-slash-commands \
+  < prompt-N.txt > eval/outputs/without-skill/prompt-N.md
+```
+
+The `--disable-slash-commands` flag prevents skill loading. The clean temp
+directory ensures no access to `.claude/skills/`, existing scripts, or
+project-specific CLAUDE.md content beyond basic context.
+
+### General Rules
+
+1. Each prompt runs as a single one-shot generation (no follow-up questions)
+2. Pre-extracted prompts are in `eval/prompt-{1-5}.txt`
+3. The automated runner `eval/run-eval.sh` handles both conditions
+
+## Context
+
+Both conditions receive minimal project context establishing the Gates
+Foundation public health purpose. The WITH condition additionally has access to
+all skill files and existing project code.
 
 ## Prompts
 
