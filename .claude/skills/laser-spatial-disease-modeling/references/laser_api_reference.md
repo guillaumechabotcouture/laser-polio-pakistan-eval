@@ -431,30 +431,31 @@ BirthsByCBR(model, birthrates=birthrate_array, pyramid=age_pyramid)
 #### calc_capacity
 
 ```python
-from laser.generic.model import calc_capacity
+from laser.core.utils import calc_capacity
 
-capacity = calc_capacity(initial_pop, birthrates, nticks, safety_factor=2.0)
+capacity = calc_capacity(birthrates, initial_pop, safety_factor=1.0)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `initial_pop` | int | Total initial population across all nodes |
-| `birthrates` | ndarray | Birth rates in **per-1000/year** (asserted 0–100 internally) |
-| `nticks` | int | Simulation length in ticks |
-| `safety_factor` | float | Multiplier on projected growth (use 2–4 for growing populations) |
+| `birthrates` | ndarray | Shape (nticks, nnodes), values in **per-1000/year** (asserted 0–100 internally). `nticks` is inferred from `birthrates.shape[0]`. |
+| `initial_pop` | ndarray | Per-node initial populations |
+| `safety_factor` | float | Multiplier on projected growth (default 1.0; use 2–4 for growing populations) |
 
-Returns the total agent capacity needed for `LaserFrame`. If population growth exceeds capacity during simulation, `LaserFrame.add()` raises `ValueError`.
+Returns per-node estimated capacity as `np.int32` array. If population growth exceeds capacity during simulation, `LaserFrame.add()` raises `ValueError`.
 
 #### MortalityByCDR
 
 ```python
-MortalityByCDR(model, deathrates=deathrate_array)
+MortalityByCDR(model, mortalityrates=deathrate_array, mappings=None, validating=False)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `model` | Model | LASER Model instance |
-| `deathrates` | ndarray | Shape (nticks, nnodes), values in **per-1000/year** |
+| `mortalityrates` | ndarray | Shape (nticks, nnodes), values in **per-1000/year** |
+| `mappings` | list or None | State-to-node-property mappings for decrementing counts on death. Default maps S/E/I/R states to their node arrays. |
+| `validating` | bool | Enable pre/post-step consistency checks (default: False) |
 
 **Death probability:** Each tick, per agent: `p_death = 1 - (1 - CDR/1000)^(1/365)`. Deaths set `state = State.DECEASED.value` (-1) and decrement the appropriate node compartment count.
 
@@ -539,6 +540,7 @@ from laser.generic.immunization import (
 )
 
 # Periodic campaign across an age band
+# period, coverage, age_lower, age_upper are required positional arguments
 ImmunizationCampaign(model, period=365, coverage=0.9,
                      age_lower=270, age_upper=365*5,
                      start=0, end=-1, verbose=False)
@@ -564,11 +566,27 @@ Immunization sets `susceptibility[idx] = 0` for affected agents.
 
 ```python
 from laser.generic.immunization import RoutineImmunizationEx
+import laser.core.distributions as dists
+import numba as nb
 
-# Correct built-in vaccination: sets state=RECOVERED, updates node counts
-RoutineImmunizationEx(model, period=7, coverage=0.85, age=270,
-                      start=0, end=-1, verbose=False)
+# RoutineImmunizationEx takes Numba-compiled callables, not scalar values:
+#   coverage_fn:      (tick, nodeid) -> float coverage probability
+#   dose_timing_dist: (seed, nodeid) -> int ticks until dose
+
+# Example: constant 85% coverage, vaccination at age 270 days
+dose_timing = dists.constant_int(270)
+
+@nb.njit
+def coverage_fn(tick, nodeid):
+    return 0.85
+
+RoutineImmunizationEx(model, coverage_fn, dose_timing,
+                      dose_timing_min=1, initialize=True,
+                      track=False, validating=False)
 ```
+
+> **Note:** For simpler campaign-style vaccination without Numba callables, use
+> `VaccinationCampaign` from `scripts/custom_components.py`.
 
 For campaign-style vaccination with correlated missedness (modeling hard-to-reach populations), see `VaccinationCampaign` in `scripts/custom_components.py`.
 

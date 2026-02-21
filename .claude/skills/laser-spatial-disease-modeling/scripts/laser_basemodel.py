@@ -36,6 +36,11 @@ from laser.generic import SEIR, Model
 from laser.generic.utils import ValuesMap
 from laser.generic.vitaldynamics import BirthsByCBR, MortalityByCDR
 
+try:
+    from verification_checks import verify_model_health
+except ImportError:
+    verify_model_health = None
+
 
 class SpatialSEIRModel(BaseModel):
     """LASER spatial SEIR model wrapped for calabaria calibration.
@@ -82,7 +87,7 @@ class SpatialSEIRModel(BaseModel):
         ConfigSpec("inf_sigma", default=2, doc="Std dev infectious period (days)"),
     ])
 
-    def __init__(self, scenario_gdf, distances, birthrates, pyramid):
+    def __init__(self, scenario_gdf, distances, birthrates, deathrates, pyramid):
         """Initialize with pre-built scenario data.
 
         Args:
@@ -90,15 +95,17 @@ class SpatialSEIRModel(BaseModel):
                           geometry, S, E, I, R]. One row per spatial patch.
             distances: 2D numpy array of pairwise distances (km) between patches.
             birthrates: 1D array of crude birth rates per patch (per-1000/year).
+            deathrates: 1D array of crude death rates per patch (per-1000/year).
             pyramid: Age pyramid for BirthsByCBR (from KaplanMeierEstimator or similar).
         """
         super().__init__()
         self.scenario_gdf = scenario_gdf
         self.distances = distances
         self.birthrates = birthrates
+        self.deathrates = deathrates
         self.pyramid = pyramid
 
-        # Validate birthrate units (critical — see LASER skill Critical Gotchas)
+        # Validate birthrate units (critical — see LASER skill Layer 1)
         assert np.all(birthrates >= 1) and np.all(birthrates <= 60), (
             f"Birthrates must be per-1000/year (typical 10-50), "
             f"got {birthrates.min():.4f}-{birthrates.max():.4f}"
@@ -166,7 +173,7 @@ class SpatialSEIRModel(BaseModel):
             SEIR.Recovered(model),
             SEIR.Transmission(model, expdurdist, seasonality=seasonality),
             BirthsByCBR(model, birthrates=self.birthrates, pyramid=self.pyramid),
-            MortalityByCDR(model),
+            MortalityByCDR(model, mortalityrates=self.deathrates),
         ]
 
         return model
@@ -180,6 +187,13 @@ class SpatialSEIRModel(BaseModel):
         """
         laser.core.random.seed(seed)
         state.run()
+
+        # Post-run verification (non-fatal — prints report but doesn't raise)
+        if verify_model_health is not None:
+            try:
+                verify_model_health(state, raise_on_critical=False)
+            except Exception as e:
+                print(f"Warning: verification check error: {e}")
 
     @model_output("weekly_incidence")
     def weekly_incidence(self, state: Model) -> pl.DataFrame:
