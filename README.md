@@ -1,12 +1,15 @@
 # Evaluating Claude Code Skills for Spatial Disease Modeling
 
 Can specialized AI coding skills help Claude Code build epidemiological models
-using a niche simulation framework? This repository provides an A/B evaluation
+using a niche simulation framework? This repository provides A/B evaluations
 measuring the impact of a three-skill pipeline on code generation quality when
-building a spatial polio transmission model for Pakistan using the
+building spatial disease transmission models using the
 [LASER framework](https://laser.idmod.org/).
 
-**Result: WITH skills scored 60/60 vs WITHOUT skills 25/60 (41.7%).**
+**Polio test:** WITH skills 60/60 vs WITHOUT 25/60 (42%).
+**Guinea worm stress test:** WITH skills 57/60 vs WITHOUT 29/60 (48%). Zero negative transfer — the skill correctly adapted to a disease it was never designed for (SEIS, dual-host, prevention-only).
+
+See [`eval/guinea-worm/`](eval/guinea-worm/) for the cross-disease stress test.
 
 ## Why This Matters
 
@@ -158,26 +161,42 @@ laser-polio-pakistan-eval/
 │           └── modelops_calabaria_reference.md
 │
 ├── eval/                              # Evaluation framework
-│   ├── prompts.md                     #   5 test prompts
-│   ├── rubric.md                      #   4-dimension scoring rubric
-│   ├── run-eval.sh                    #   Automated A/B runner
-│   ├── prompt-{1-5}.txt              #   Extracted plain-text prompts
-│   └── outputs/
-│       ├── ab-test-report.md          #   Main A/B evaluation report
-│       ├── deep-analysis-report.md    #   API audit + failure taxonomy
-│       ├── model-calibration-report.md#   13-district calibration write-up
-│       ├── with-skill/                #   WITH skill outputs (5 summaries)
-│       ├── without-skill/             #   WITHOUT skill outputs + scripts
-│       └── *.png, *.csv              #   Diagnostic plots + data
+│   ├── prompts.md                     #   Polio: 5 test prompts
+│   ├── rubric.md                      #   Polio: 4-dimension scoring rubric
+│   ├── run-eval.sh                    #   Polio: automated A/B runner
+│   ├── prompt-{1-5}.txt              #   Polio: plain-text prompts
+│   ├── outputs/
+│   │   ├── ab-test-report.md          #   Polio: A/B evaluation report
+│   │   ├── deep-analysis-report.md    #   Polio: API audit + failure taxonomy
+│   │   ├── model-calibration-report.md#   13-district calibration write-up
+│   │   ├── with-skill/                #   WITH skill outputs (5 summaries)
+│   │   ├── without-skill/             #   WITHOUT skill outputs + scripts
+│   │   └── *.png, *.csv              #   Diagnostic plots + data
+│   │
+│   └── guinea-worm/                   # Cross-disease stress test
+│       ├── README.md                  #   Guinea worm eval documentation
+│       ├── prompts.md                 #   5 prompts (SEIS, dual-host, Chad)
+│       ├── rubric.md                  #   Adapted rubric (SEIS, guinea worm)
+│       ├── run-eval.sh                #   Automated A/B runner
+│       ├── prompt-{1-5}.txt          #   Plain-text prompts
+│       └── outputs/
+│           ├── ab-test-report.md      #   57/60 vs 29/60, zero neg. transfer
+│           ├── with-skill/            #   WITH skill outputs
+│           ├── without-skill/         #   WITHOUT skill outputs
+│           └── *.png                  #   Diagnostic plots
 │
 ├── scripts/                           # WITH-skill generated models
-│   ├── polio_seir_basic_10patch.py    #   P1: Basic SEIR
-│   ├── polio_gravity_seasonal.py      #   P2: Gravity + monsoon
-│   ├── polio_seir_10patch.py          #   P3: Full SEIRV with vaccination
-│   ├── calibrate_polio.py             #   P4: LHS calibration framework
-│   ├── polio_seir_20district.py       #   P5: 20-district integration
-│   ├── custom_components.py           #   Shared custom LASER components
-│   └── polio_calibration.py           #   Alternative calibration script
+│   ├── polio_seir_basic_10patch.py    #   Polio P1: Basic SEIR
+│   ├── polio_gravity_seasonal.py      #   Polio P2: Gravity + monsoon
+│   ├── polio_seir_10patch.py          #   Polio P3: Full SEIRV with vaccination
+│   ├── calibrate_polio.py             #   Polio P4: LHS calibration framework
+│   ├── polio_seir_20district.py       #   Polio P5: 20-district integration
+│   ├── custom_components.py           #   Polio: shared custom LASER components
+│   ├── polio_calibration.py           #   Polio: alternative calibration script
+│   ├── guinea_worm_components.py      #   GW: 10 custom LASER components
+│   ├── guinea_worm_chad.py            #   GW: dual-host SEIS simulation
+│   ├── guinea_worm_chad_interventions.py # GW: full model with interventions
+│   └── guinea_worm_calibration.py     #   GW: Carter Center data calibration
 │
 └── reference/
     └── polio-model-requirements.md    # Ground truth domain specification
@@ -187,9 +206,10 @@ laser-polio-pakistan-eval/
 
 | Report | Description |
 |--------|-------------|
-| [`eval/outputs/ab-test-report.md`](eval/outputs/ab-test-report.md) | Main A/B evaluation: score sheet, per-prompt analysis, summary statistics |
-| [`eval/outputs/deep-analysis-report.md`](eval/outputs/deep-analysis-report.md) | Deep dive: API usage audit (112 vs 11 calls), failure mode taxonomy, skill-to-code mapping, practical impact assessment |
-| [`eval/outputs/model-calibration-report.md`](eval/outputs/model-calibration-report.md) | 13-district Pakistan polio model calibration against MMWR/GPEI surveillance data |
+| [`eval/outputs/ab-test-report.md`](eval/outputs/ab-test-report.md) | Polio A/B evaluation: 60/60 vs 25/60, framework abandonment pattern |
+| [`eval/outputs/deep-analysis-report.md`](eval/outputs/deep-analysis-report.md) | Deep dive: API usage audit (112 vs 11 calls), failure mode taxonomy |
+| [`eval/outputs/model-calibration-report.md`](eval/outputs/model-calibration-report.md) | 13-district Pakistan polio model calibration against MMWR/GPEI data |
+| [`eval/guinea-worm/outputs/ab-test-report.md`](eval/guinea-worm/outputs/ab-test-report.md) | Guinea worm stress test: 57/60 vs 29/60, zero negative transfer |
 
 ## The LASER Framework
 
@@ -210,11 +230,11 @@ Documentation: [laser.idmod.org](https://laser.idmod.org/laser-generic/)
 ## Project Context
 
 This is a public health epidemiological modeling project by the Bill & Melinda
-Gates Foundation's Global Health division. The work supports polio eradication
-efforts by building spatial transmission models to evaluate vaccination
-strategies across Pakistan's districts. All modeling uses standard SEIR
-compartmental frameworks — purely computational epidemiology for public health
-planning.
+Gates Foundation's Global Health division. The work evaluates AI coding skills
+for spatial disease transmission modeling using the LASER framework, applied to
+polio eradication in Pakistan and guinea worm eradication in Chad. All modeling
+uses standard compartmental frameworks (SEIR, SEIS) — purely computational
+epidemiology for public health planning.
 
 ## License
 
