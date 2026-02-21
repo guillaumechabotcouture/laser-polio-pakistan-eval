@@ -1,0 +1,13 @@
+Build a complete spatial polio transmission model for Pakistan using the LASER
+framework with these specifications:
+- 20 districts with heterogeneous populations (range 50k-2M)
+- SEIR dynamics with R0≈6, 3-day latent period, 28-day infectious period
+- Gravity-model spatial coupling
+- Monsoon-season transmission forcing (peak Jul-Oct)
+- OPV routine immunization at 80% coverage
+- SIA campaigns every 6 months
+- Importation of 3 infections every 60 days for the first 5 years
+- 20-year simulation with 10-year burn-in
+- Output: weekly incidence per district, proportion of zero-incidence weeks
+
+Write complete, runnable Python code. Do not install any packages.

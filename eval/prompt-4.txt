@@ -1,0 +1,13 @@
+Design a calibration framework for the LASER polio model that:
+1. Compares simulated incidence to AFP (Acute Flaccid Paralysis) surveillance
+   data, accounting for the ~1:200 paralysis-to-infection ratio
+2. Uses a fitness metric based on the proportion of zero-incidence weeks per
+   district (similar to critical community size analysis)
+3. Samples from these parameter ranges:
+   - beta: U(0.15, 0.30)
+   - gravity_k: 10^U(-3, -1)
+   - seasonal_amplitude: U(1.0, 1.5)
+4. Ranks simulations by goodness of fit
+
+Write the calibration loop and scoring functions. Use LASER framework
+conventions. Do not install any packages.

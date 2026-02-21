@@ -1,0 +1,2 @@
+rank,sample_id,beta,gravity_k,seasonal_amplitude,total_score,ccs_score,afp_score,total_afp_yr,elapsed_sec,pz_Quetta,pz_Peshawar,pz_Karachi,pz_Lahore,pz_Islamabad,pz_Multan,pz_Faisalabad,pz_Rawalpindi,pz_Hyderabad,pz_Bannu,pz_N_Waziristan,pz_S_Waziristan,pz_DI_Khan
+1,0,0.224095,0.007410,1.244042,1.802427,0.348655,3.983085,2191.890500,898.111246,0.000000,0.000000,0.000000,0.143954,0.161228,0.076775,0.113244,0.088292,0.000000,0.007678,0.000000,0.005758,0.000000

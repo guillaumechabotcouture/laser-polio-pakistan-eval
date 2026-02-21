@@ -1,0 +1,10 @@
+Extend the basic LASER polio model to include:
+1. A gravity-model migration network between patches, with distance decay
+   exponent c=1.5 and destination population exponent b=0.5
+2. Seasonal forcing that peaks during July-October (monsoon season) with
+   amplitude 1.3x baseline and troughs during December-March at 0.7x baseline
+3. Row-normalize the network so no patch exports more than 15% of its
+   force of infection
+
+Write complete Python code using the LASER framework. Assume patches are
+arranged in a line 50km apart. Do not install any packages.

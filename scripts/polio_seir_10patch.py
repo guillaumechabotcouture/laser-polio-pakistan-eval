@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
-Pakistan Polio SEIR Model — 10 Districts with Per-Patch Vaccination
+Pakistan Polio SEIRV Model — 13 Districts with Separate Vaccine Tracking
 
 Calibrated to MMWR/WER surveillance data (Vol. 72 No. 33, Vol. 73 No. 36).
-Uses LASER framework for agent-based spatial SEIR simulation.
+Uses LASER framework for agent-based spatial SEIRV simulation.
 
 Key features:
-    - Per-district OPV3 coverage (RI + SIA) from provincial MMWR reports
+    - SEIRV compartments: Vaccinated (V) tracked separately from naturally
+      Recovered (R). OPV provides mucosal immunity that wanes (~3 years),
+      while natural infection provides stronger, longer-lasting immunity.
+    - Routine Immunization at 6 weeks of age, 80% coverage (OPV)
+    - SIAs every 6 months targeting 0-5 years, 90% coverage
+    - Correlated missedness via per-agent reachable flag
     - Monsoon seasonal forcing (Jul-Oct peak, matching Pakistan polio seasonality)
     - Gravity-model spatial coupling between districts
     - Endemic corridor importation (Quetta, Peshawar, Bannu, Karachi)
-    - Vaccination sets state=RECOVERED (not susceptibility=0) to work with
-      TransmissionSE kernel which only checks state==SUSCEPTIBLE
 
 Usage:
     /opt/anaconda3/bin/python3 scripts/polio_seir_10patch.py
@@ -38,7 +41,8 @@ import matplotlib.pyplot as plt
 
 # Add scripts dir to path for custom_components
 sys.path.insert(0, str(Path(__file__).parent))
-from custom_components import PerPatchVaccination, PatchImportation
+from custom_components import (VaccinatedCompartment, PerPatchVaccinationSEIRV,
+                               PatchImportation, VACCINATED)
 
 # ============================================================================
 # District Configuration (MMWR Vol. 72 No. 33, Vol. 73 No. 36)
@@ -151,9 +155,12 @@ def build_scenario():
     scenario["nodeid"] = range(len(scenario))
 
     # Initial compartments based on per-district immunity
+    # At t=0, all pre-existing immunity is counted as natural (R).
+    # V starts at 0 — vaccination builds up the V compartment during simulation.
     scenario["I"] = scenario["seed_I"].astype(np.uint32)
     scenario["E"] = np.zeros(len(scenario), dtype=np.uint32)
     scenario["R"] = np.round(scenario["initial_immunity"] * scenario["population"]).astype(np.uint32)
+    scenario["V"] = np.zeros(len(scenario), dtype=np.uint32)
     scenario["S"] = (scenario["population"] - scenario["E"] - scenario["I"] - scenario["R"]).astype(np.uint32)
 
     return scenario
@@ -197,8 +204,9 @@ def run_model():
     cdr = 7.0
     mortality_array = np.full((PARAMS.nticks, nnodes), cdr, dtype=np.float32)
 
-    # Build model
-    model = Model(scenario, PARAMS, birthrates=birthrate_array)
+    # Build model with V compartment for vaccine tracking
+    model = Model(scenario, PARAMS, birthrates=birthrate_array,
+                  additional_states=["V"])
 
     # Gravity network (manual setup for custom normalization)
     from laser.core.migration import distance as haversine_distance
@@ -219,32 +227,56 @@ def run_model():
     network = row_normalizer(network, 0.2)  # Cap at 20% export per node
     model.network = network
 
-    # Per-patch vaccination arrays
-    ri_coverage = np.array(scenario.ri_coverage, dtype=np.float32)
-    sia_coverage = np.array(scenario.sia_coverage, dtype=np.float32)
+    # Per-patch unreachable fractions (correlated missedness)
     unreachable_frac = np.array(scenario.unreachable_frac, dtype=np.float32)
 
-    # Endemic corridor patch indices — all districts with cross-border exposure
-    # or persistent local transmission foci
+    # OPV vaccine waning: gamma distribution, mean ~3 years (1095 days)
+    # OPV mucosal immunity is shorter-lived than natural infection immunity
+    vax_waning_dist = dists.gamma(shape=3, scale=365.0)  # mean = 3×365 = 1095 days
+
+    # Endemic corridor patch indices
     name_to_idx = {n: i for i, n in enumerate(scenario.name)}
     endemic_names = ["Quetta", "Peshawar", "Karachi", "Hyderabad", "Bannu",
                      "N_Waziristan", "S_Waziristan", "DI_Khan"]
     endemic_patch_indices = [name_to_idx[n] for n in endemic_names if n in name_to_idx]
 
-    # Assemble components in correct order
+    # Assemble components in correct order.
+    # SEIR.Susceptible must be created first (it adds people.nodeid, people.state).
+    # VaccinatedCompartment and PerPatchVaccinationSEIRV depend on these properties.
+    susceptible = SEIR.Susceptible(model)                           # 1. Count S (adds nodeid, state)
+    exposed = SEIR.Exposed(model, expdurdist, infdurdist)          # 2. E→I transitions
+    infectious = SEIR.Infectious(model, infdurdist)                 # 3. I→R transitions
+    recovered = SEIR.Recovered(model)                               # 4. Count R (natural immunity)
+
+    # Now create vaccination components (need people.nodeid from Susceptible)
+    vax_compartment = VaccinatedCompartment(model, vax_waning_dist, wandurmin=365)  # 5. V waning
+    vaccination = PerPatchVaccinationSEIRV(                         # 8. RI + SIA (S→V)
+        model, vax_compartment, unreachable_frac,
+        ri_coverage=0.80,       # 80% RI coverage (OPV at 6 weeks)
+        sia_coverage=0.90,      # 90% SIA coverage
+        ri_age=42,              # 6 weeks = 42 days
+        sia_period=180,         # Every 6 months
+        sia_max_age=1825,       # 0-5 years
+    )
+
     model.components = [
-        SEIR.Susceptible(model),                                    # 1. Count S
-        SEIR.Exposed(model, expdurdist, infdurdist),               # 2. E→I transitions
-        SEIR.Infectious(model, infdurdist),                         # 3. I→R transitions
-        SEIR.Recovered(model),                                      # 4. Count R
-        BirthsByCBR(model, birthrates=birthrate_array, pyramid=pyramid),  # 5. Births
-        MortalityByCDR(model, mortalityrates=mortality_array),      # 6. Deaths
-        PerPatchVaccination(model, ri_coverage, sia_coverage,       # 7. Vaccination
-                           unreachable_frac,                     #    with correlated
-                           sia_period=180),                      #    missedness, 2 SIA/yr
-        PatchImportation(model, infdurdist, endemic_patch_indices, # 8. Endemic importation
+        susceptible,                                                # 1. Count S
+        exposed,                                                    # 2. E→I transitions
+        infectious,                                                 # 3. I→R transitions
+        recovered,                                                  # 4. Count R (natural)
+        vax_compartment,                                            # 5. V waning (V→S)
+        BirthsByCBR(model, birthrates=birthrate_array, pyramid=pyramid),  # 6. Births
+        MortalityByCDR(model, mortalityrates=mortality_array, mappings=[  # 7. Deaths
+            (SEIR.State.SUSCEPTIBLE.value, "S"),
+            (SEIR.State.EXPOSED.value, "E"),
+            (SEIR.State.INFECTIOUS.value, "I"),
+            (SEIR.State.RECOVERED.value, "R"),
+            (VACCINATED, "V"),
+        ]),
+        vaccination,                                                # 8. RI + SIA (S→V)
+        PatchImportation(model, infdurdist, endemic_patch_indices,  # 9. Endemic importation
                          period=30, count=3),
-        SEIR.Transmission(model, expdurdist, seasonality=seasonality),  # 9. Transmission
+        SEIR.Transmission(model, expdurdist, seasonality=seasonality),  # 10. Transmission
     ]
 
     # Initialize ages from pyramid AFTER components are set (BirthsByCBR creates dob)
@@ -252,11 +284,13 @@ def run_model():
     initialize_ages(model, pyramid)
 
     nyears_total = PARAMS.nticks // 365
-    print(f"Running {nyears_total}-year Pakistan polio SEIR simulation ({BURNIN_YEARS}yr burn-in)...")
+    print(f"Running {nyears_total}-year Pakistan polio SEIRV simulation ({BURNIN_YEARS}yr burn-in)...")
     print(f"  Districts: {len(scenario)}")
     print(f"  Total population: {scenario.population.sum():,}")
+    print(f"  Vaccination: RI at 6wk (80%), SIA biannual 0-5yr (90%)")
+    print(f"  OPV waning: ~3yr mean (gamma), Natural immunity: permanent")
     print(f"  Ticks: {PARAMS.nticks}")
-    model.run("Pakistan Polio SEIR")
+    model.run("Pakistan Polio SEIRV")
 
     return model, scenario, beta_season_365
 
@@ -266,13 +300,14 @@ def run_model():
 # ============================================================================
 
 def _get_node_arrays(model, ticks, node_idx):
-    """Helper: return S, E, I, R, N arrays for a node at given ticks."""
+    """Helper: return S, E, I, R, V, N arrays for a node at given ticks."""
     S = model.nodes.S[ticks, node_idx].astype(np.float64)
     E = model.nodes.E[ticks, node_idx].astype(np.float64)
     I = model.nodes.I[ticks, node_idx].astype(np.float64)
     R = model.nodes.R[ticks, node_idx].astype(np.float64)
-    N = np.maximum(S + E + I + R, 1.0)
-    return S, E, I, R, N
+    V = model.nodes.V[ticks, node_idx].astype(np.float64)
+    N = np.maximum(S + E + I + R + V, 1.0)
+    return S, E, I, R, V, N
 
 
 def plot_diagnostics(model, scenario, beta_season_365):
@@ -330,7 +365,7 @@ def plot_diagnostics(model, scenario, beta_season_365):
     sample30 = np.arange(0, nticks, 30)
     time30 = sample30 / 365.0
     for i in range(nnodes):
-        S, E, I, R, N = _get_node_arrays(model, sample30, i)
+        S, E, I, R, V, N = _get_node_arrays(model, sample30, i)
         ax.plot(time30, R0 * S / N, color=district_colors[i], alpha=0.7,
                 lw=1.2, label=names[i])
     ax.axhline(1.0, color="black", ls="-", lw=2, alpha=0.4, label="R_eff = 1")
@@ -344,7 +379,7 @@ def plot_diagnostics(model, scenario, beta_season_365):
     # --- (D) S/N for ALL districts (not just 4) ---
     ax = axes[1, 0]
     for i in range(nnodes):
-        S, E, I, R, N = _get_node_arrays(model, sample30, i)
+        S, E, I, R, V, N = _get_node_arrays(model, sample30, i)
         ls = "-" if provinces[i] in ("Balochistan", "KP", "KP/South", "Sindh") else "--"
         ax.plot(time30, S / N, color=district_colors[i], ls=ls, alpha=0.8,
                 lw=1.2, label=names[i])
@@ -420,8 +455,8 @@ def print_summary(model, scenario):
     print("=" * 70)
 
     # Annual incidence per district (post-burn-in)
-    print(f"\n{'District':<14} {'Province':<14} {'Ann.Inf(med)':<14} {'Ann.Inf(post)':<14} {'S/N(final)':<10}")
-    print("-" * 66)
+    print(f"\n{'District':<14} {'Province':<14} {'Ann.Inf(med)':<14} {'Ann.Inf(post)':<14} {'S/N':<8} {'V/N':<8} {'R/N':<8}")
+    print("-" * 84)
 
     total_infections = 0
     for i in range(nnodes):
@@ -431,33 +466,39 @@ def print_summary(model, scenario):
         total_post = post_burnin.sum()
         total_infections += total_post
 
-        # Final S/N
+        # Final compartment fractions
         final_tick = nticks - 1
         S_f = float(model.nodes.S[final_tick, i])
-        N_f = float(model.nodes.S[final_tick, i] + model.nodes.E[final_tick, i] +
-                     model.nodes.I[final_tick, i] + model.nodes.R[final_tick, i])
+        R_f = float(model.nodes.R[final_tick, i])
+        V_f = float(model.nodes.V[final_tick, i])
+        N_f = float(S_f + model.nodes.E[final_tick, i] +
+                     model.nodes.I[final_tick, i] + R_f + V_f)
         sn = S_f / max(N_f, 1)
+        vn = V_f / max(N_f, 1)
+        rn = R_f / max(N_f, 1)
 
-        print(f"{names[i]:<14} {scenario.province.iloc[i]:<14} {median_ann:<14.0f} {total_post:<14.0f} {sn:<10.3f}")
+        print(f"{names[i]:<14} {scenario.province.iloc[i]:<14} {median_ann:<14.0f} {total_post:<14.0f} {sn:<8.3f} {vn:<8.3f} {rn:<8.3f}")
 
     total_pop = scenario.population.sum()
     print(f"\n  Total population: {total_pop:,}")
     print(f"  Total infections (years {BURNIN_YEARS}–{nyears}): {total_infections:,.0f}")
     print(f"  Annual rate per million: {total_infections / analysis_years / total_pop * 1e6:.0f}")
 
-    # Compartment integrity check
-    print("\nCompartment integrity check:")
+    # Compartment integrity check (SEIRV)
+    print("\nCompartment integrity check (SEIRV):")
     for tick in [0, nticks // 2, nticks - 1]:
         S = model.nodes.S[tick].sum()
         E = model.nodes.E[tick].sum()
         I = model.nodes.I[tick].sum()
         R = model.nodes.R[tick].sum()
-        print(f"  Tick {tick:>5}: S={S:>8} E={E:>5} I={I:>5} R={R:>8} Total={S + E + I + R:>8}")
+        V = model.nodes.V[tick].sum()
+        print(f"  Tick {tick:>5}: S={S:>8} E={E:>5} I={I:>5} R={R:>8} V={V:>8} Total={S+E+I+R+V:>8}")
 
     # Check for negative compartments
     any_negative = False
     for comp, arr in [("S", model.nodes.S), ("E", model.nodes.E),
-                      ("I", model.nodes.I), ("R", model.nodes.R)]:
+                      ("I", model.nodes.I), ("R", model.nodes.R),
+                      ("V", model.nodes.V)]:
         if np.any(arr[:nticks] < 0):
             print(f"  WARNING: Negative {comp} values detected!")
             any_negative = True
@@ -469,7 +510,8 @@ def print_summary(model, scenario):
     for y in range(0, nyears + 1, 2):
         t = min(y * 365, nticks - 1)
         pop_t = int(model.nodes.S[t].sum() + model.nodes.E[t].sum() +
-                     model.nodes.I[t].sum() + model.nodes.R[t].sum())
+                     model.nodes.I[t].sum() + model.nodes.R[t].sum() +
+                     model.nodes.V[t].sum())
         print(f"  Year {y:>2}: {pop_t:>10,}")
     print(f"  Agent capacity: {model.people.capacity:,}, Active: {model.people.count:,}")
 
@@ -521,7 +563,7 @@ def plot_dynamics(model, scenario):
     idx = names.index("Peshawar")
     sample7 = np.arange(0, nticks, 7)
     time7 = sample7 / 365.0
-    S, E, I, R, N = _get_node_arrays(model, sample7, idx)
+    S, E, I, R, V, N = _get_node_arrays(model, sample7, idx)
 
     ax.plot(time7, S / N, color="#3498db", lw=1, label="S/N (left)")
     ax.axhline(1 / R0, color="black", ls=":", alpha=0.4, label="S* = 1/R0")
@@ -544,7 +586,7 @@ def plot_dynamics(model, scenario):
     # --- (C) Same dual-axis for Quetta ---
     ax = axes[1, 0]
     idx = names.index("Quetta")
-    S, E, I, R, N = _get_node_arrays(model, sample7, idx)
+    S, E, I, R, V, N = _get_node_arrays(model, sample7, idx)
 
     ax.plot(time7, S / N, color="#3498db", lw=1, label="S/N (left)")
     ax.axhline(1 / R0, color="black", ls=":", alpha=0.4, label="S* = 1/R0")

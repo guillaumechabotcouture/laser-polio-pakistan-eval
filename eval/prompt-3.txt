@@ -1,0 +1,10 @@
+Add vaccination to the LASER polio model:
+1. Routine immunization at 6 weeks of age with 80% coverage (OPV)
+2. Supplementary Immunization Activities (SIAs) every 6 months targeting
+   children aged 0-5 years with 90% coverage
+3. The model should track vaccinated individuals separately from naturally
+   recovered, since OPV provides mucosal immunity while natural infection
+   provides stronger, longer-lasting immunity
+
+Show the complete component setup using LASER's immunization classes where
+possible, and custom components where needed. Do not install any packages.

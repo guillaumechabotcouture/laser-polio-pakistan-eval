@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A/B Evaluation Runner for LASER Skill
+# A/B Evaluation Runner for LASER Skill Pipeline
 #
 # Usage:
 #   ./eval/run-eval.sh <prompt-number>
@@ -7,8 +7,8 @@
 #   ./eval/run-eval.sh all        # Run all prompts
 #
 # This script runs each prompt through two Claude sessions:
-#   A) WITH the LASER skill (project .claude/skills/ loaded normally)
-#   B) WITHOUT the skill (--deny flag blocks it)
+#   A) WITH skills (all three pipeline skills loaded normally)
+#   B) WITHOUT skills (--disable-slash-commands blocks all skills)
 #
 # Outputs are saved to eval/outputs/{with,without}-skill/prompt-N.md
 
@@ -16,46 +16,40 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-PROMPTS_FILE="$SCRIPT_DIR/prompts.md"
 
-# Extract a specific prompt by number from prompts.md
-extract_prompt() {
-    local num=$1
-    # Extract text between ```  blocks under "### Prompt N"
-    awk "/^### Prompt ${num}:/,/^\`\`\`$/" "$PROMPTS_FILE" \
-        | sed -n '/^```$/,/^```$/p' \
-        | sed '1d;$d'
-}
+# Ensure CLAUDECODE is unset so we can launch nested sessions
+unset CLAUDECODE 2>/dev/null || true
 
 run_prompt() {
     local num=$1
-    local prompt
-    prompt=$(extract_prompt "$num")
+    local prompt_file="$SCRIPT_DIR/prompt-${num}.txt"
 
-    if [ -z "$prompt" ]; then
-        echo "ERROR: Could not extract prompt $num"
+    if [ ! -f "$prompt_file" ]; then
+        echo "ERROR: $prompt_file not found. Run the extraction step first."
         return 1
     fi
 
     echo "=========================================="
     echo "PROMPT $num"
     echo "=========================================="
-    echo "$prompt"
+    cat "$prompt_file"
     echo ""
 
-    # --- Session A: WITH skill ---
-    echo "--- Running WITH skill ---"
+    # --- Session A: WITH skills ---
+    echo "--- Running WITH skills ---"
     local out_a="$SCRIPT_DIR/outputs/with-skill/prompt-${num}.md"
+    mkdir -p "$(dirname "$out_a")"
     cd "$PROJECT_DIR"
-    echo "$prompt" | claude --print 2>/dev/null > "$out_a" || true
-    echo "  Saved to: $out_a"
+    claude --print --dangerously-skip-permissions < "$prompt_file" > "$out_a" 2>/dev/null || true
+    echo "  Saved to: $out_a ($(wc -c < "$out_a") bytes)"
 
-    # --- Session B: WITHOUT skill ---
-    echo "--- Running WITHOUT skill ---"
+    # --- Session B: WITHOUT skills ---
+    echo "--- Running WITHOUT skills ---"
     local out_b="$SCRIPT_DIR/outputs/without-skill/prompt-${num}.md"
+    mkdir -p "$(dirname "$out_b")"
     cd "$PROJECT_DIR"
-    echo "$prompt" | claude --print --deny "Skill(laser-spatial-disease-modeling)" 2>/dev/null > "$out_b" || true
-    echo "  Saved to: $out_b"
+    claude --print --dangerously-skip-permissions --disable-slash-commands < "$prompt_file" > "$out_b" 2>/dev/null || true
+    echo "  Saved to: $out_b ($(wc -c < "$out_b") bytes)"
 
     echo ""
 }
