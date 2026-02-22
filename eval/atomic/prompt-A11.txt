@@ -1,0 +1,1 @@
+Using the LASER framework, add a birth process to a model using BirthsByCBR. The crude birth rate is 44 per 1000 population per year. Show the complete code. Be explicit about what units BirthsByCBR expects for the birth rate parameter. Do not install any packages.

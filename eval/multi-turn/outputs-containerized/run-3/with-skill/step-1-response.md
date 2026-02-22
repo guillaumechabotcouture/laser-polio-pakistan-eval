@@ -1,0 +1,179 @@
+Here is a complete, self-contained 4-patch basic SEIR model using the LASER framework:
+
+```python
+"""
+Basic 4-Patch SEIR Model — LASER Framework
+===========================================
+Respiratory disease: R0=5, latent period=4d, infectious period=10d
+Patches:  100k / 200k / 150k / 80k
+Initial:  90% S, 0% E, 1% I, 9% R
+Duration: 365 days (1 year)
+No spatial coupling | No seasonal forcing | No demographics
+"""
+
+import numpy as np
+import geopandas as gpd
+from shapely.geometry import Point
+from laser.core.propertyset import PropertySet
+import laser.core.distributions as dists
+from laser.generic import SEIR, Model
+import matplotlib.pyplot as plt
+
+# ── 1. Patch populations and initial conditions ───────────────────────────────
+populations = np.array([100_000, 200_000, 150_000, 80_000], dtype=np.int32)
+n_patches = len(populations)
+
+# 90% S, 0% E, 1% I, 9% R
+I_init = np.round(0.01 * populations).astype(np.int32)
+R_init = np.round(0.09 * populations).astype(np.int32)
+E_init = np.zeros(n_patches, dtype=np.int32)
+S_init = populations - E_init - I_init - R_init  # remainder to S
+
+assert np.all(S_init + E_init + I_init + R_init == populations), \
+    "Initial S+E+I+R must equal population in every patch"
+assert np.all(I_init > 0), "Every patch needs at least one initial infectious agent"
+
+# ── 2. Scenario GeoDataFrame ──────────────────────────────────────────────────
+# Placeholder coordinates — positions are unused with no spatial coupling
+scenario = gpd.GeoDataFrame(
+    {
+        "nodeid":     np.arange(n_patches),
+        "name":       [f"Patch {i}" for i in range(n_patches)],
+        "population": populations,
+        "S":          S_init,
+        "E":          E_init,
+        "I":          I_init,
+        "R":          R_init,
+        "geometry":   [Point(72.0 + i * 0.5, 33.0 + i * 0.5) for i in range(n_patches)],
+    },
+    crs="EPSG:4326",
+)
+
+print("Initial conditions:")
+for _, row in scenario.iterrows():
+    N = row["population"]
+    print(
+        f"  {row['name']}: N={N:,}  "
+        f"S={row['S']:,} ({row['S']/N*100:.0f}%)  "
+        f"I={row['I']:,} ({row['I']/N*100:.1f}%)  "
+        f"R={row['R']:,} ({row['R']/N*100:.0f}%)"
+    )
+
+# ── 3. Model parameters ───────────────────────────────────────────────────────
+# beta = R0 / infectious_period = 5 / 10 = 0.5 per day
+# (In SEIR ODEs: R0 = beta * gamma^-1, gamma = 1/infectious_period)
+nticks = 365
+
+params = PropertySet({
+    "prng_seed": 42,
+    "nticks":    nticks,
+    "beta":      0.5,   # R0=5, infectious_period=10d → beta = R0/inf_period
+})
+
+# ── 4. Duration distributions ─────────────────────────────────────────────────
+expdurdist = dists.constant_int(4)   # Exposed (latent) period: exactly 4 days
+infdurdist = dists.constant_int(10)  # Infectious period: exactly 10 days
+
+# ── 5. Construct model ────────────────────────────────────────────────────────
+# birthrates=None → no demographics; capacity set to initial population
+model = Model(scenario, params)
+
+# Explicitly zero out the migration network — no spatial coupling
+model.network = np.zeros((n_patches, n_patches), dtype=np.float64)
+
+# ── 6. Component list ─────────────────────────────────────────────────────────
+# Order: Susceptible → Exposed → Infectious → Recovered → Transmission
+# Susceptible and Recovered bookend the transition steps, maintaining S+E+I+R=N.
+model.components = [
+    SEIR.Susceptible(model),
+    SEIR.Exposed(model, expdurdist, infdurdist),
+    SEIR.Infectious(model, infdurdist),
+    SEIR.Recovered(model),
+    SEIR.Transmission(model, expdurdist, seasonality=None),  # seasonality=None → uniform 1.0
+]
+
+# ── 7. Run ────────────────────────────────────────────────────────────────────
+print("\nRunning 4-patch SEIR (365 days)...")
+model.run("BasicSEIR_4patch")
+print("Done.\n")
+
+# ── 8. Epidemic summary ───────────────────────────────────────────────────────
+print("=== Epidemic Summary ===")
+for idx in range(n_patches):
+    N         = int(populations[idx])
+    I_trace   = model.nodes.I[:nticks, idx]
+    peak_I    = int(I_trace.max())
+    peak_day  = int(I_trace.argmax())
+    S_final   = int(model.nodes.S[nticks - 1, idx])
+    total_inf = int(model.nodes.newly_infected[:nticks, idx].sum())
+    attack_rt = (N - S_final) / N * 100
+    print(
+        f"  Patch {idx} (N={N:,}): "
+        f"peak I = {peak_I:,} on day {peak_day} | "
+        f"total infected = {total_inf:,} | "
+        f"attack rate = {attack_rt:.1f}%"
+    )
+
+# Quick sanity check: compartment non-negativity
+for name, arr in [("S", model.nodes.S), ("E", model.nodes.E),
+                  ("I", model.nodes.I), ("R", model.nodes.R)]:
+    assert np.all(arr[:nticks, :] >= 0), f"Negative values in {name} compartment"
+print("\nSanity check passed: all compartments non-negative")
+
+# ── 9. SEIR curves per patch ──────────────────────────────────────────────────
+fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+fig.suptitle(
+    "4-Patch SEIR — Respiratory disease\n"
+    r"R$_0$=5, Latent=4d, Infectious=10d | No spatial coupling | 1-year run",
+    fontsize=13,
+)
+
+for idx, ax in enumerate(axes.flat):
+    N   = populations[idx]
+    t   = np.arange(nticks)
+    pct = 100.0 / N  # convert agent counts to percent of population
+
+    ax.plot(t, model.nodes.S[:nticks, idx] * pct,
+            label="S", color="steelblue",   linewidth=1.8)
+    ax.plot(t, model.nodes.E[:nticks, idx] * pct,
+            label="E", color="darkorange",  linewidth=1.8)
+    ax.plot(t, model.nodes.I[:nticks, idx] * pct,
+            label="I", color="crimson",     linewidth=1.8)
+    ax.plot(t, model.nodes.R[:nticks, idx] * pct,
+            label="R", color="forestgreen", linewidth=1.8)
+
+    peak_day = int(model.nodes.I[:nticks, idx].argmax())
+    peak_I   = int(model.nodes.I[:nticks, idx].max())
+    ax.axvline(peak_day, color="crimson", linestyle="--", linewidth=1, alpha=0.45)
+
+    ax.set_title(
+        f"Patch {idx}  (N={N:,})\nPeak I = {peak_I:,} on day {peak_day}",
+        fontsize=10,
+    )
+    ax.set_xlabel("Day")
+    ax.set_ylabel("% of population")
+    ax.set_xlim(0, nticks - 1)
+    ax.set_ylim(0, 100)
+    ax.legend(loc="center right", fontsize=9)
+    ax.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.savefig("seir_4patch_basic.png", dpi=150, bbox_inches="tight")
+plt.show()
+print("Plot saved → seir_4patch_basic.png")
+```
+
+---
+
+**Key design decisions:**
+
+| Choice | Value | Rationale |
+|--------|-------|-----------|
+| `beta` | `0.5` | `R0 / infectious_period = 5 / 10` |
+| `expdurdist` | `constant_int(4)` | Fixed 4-day latent period |
+| `infdurdist` | `constant_int(10)` | Fixed 10-day infectious period |
+| `model.network` | zeros | Explicitly disables spatial coupling |
+| `seasonality=None` | — | Defaults to uniform 1.0 (no forcing) |
+| `birthrates=None` | — | No demographics; capacity = initial pop |
+
+**Expected behavior:** Each patch runs an independent epidemic. With R0=5 and 90% initial susceptibles, the effective R at t=0 is `5 × 0.90 = 4.5`. You should see a sharp epidemic peak roughly around day 20–30, with a high attack rate (~80–90%) by day 365.

@@ -1,0 +1,1 @@
+Using the LASER framework's distribution utilities, create a normal distribution with mean 28 days and standard deviation 5 days. Show how to create it using LASER's dists module. Do not install any packages.

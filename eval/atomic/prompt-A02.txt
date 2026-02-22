@@ -1,0 +1,1 @@
+Using the LASER framework, build a GeoDataFrame scenario for a 6-patch spatial model. Each patch should have columns for population (varying from 10k to 100k), initial S, E, I, R counts (98% S, 1% E, 1% I, 0% R), and geometry (Point coordinates). Show the complete Python code. Do not install any packages.

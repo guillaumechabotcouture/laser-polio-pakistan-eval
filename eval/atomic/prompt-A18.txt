@@ -1,0 +1,1 @@
+Using the LASER framework, after creating a Model instance, manually set its gravity-based migration network. Show how to compute a gravity network for 4 patches and assign it to the model's network attribute. Do not install any packages.

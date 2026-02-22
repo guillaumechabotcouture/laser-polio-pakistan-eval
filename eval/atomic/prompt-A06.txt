@@ -1,0 +1,1 @@
+Using the LASER framework, build a gravity-model migration network for 4 patches with populations [50000, 100000, 75000, 200000] arranged in a line 100km apart. Use parameters k=0.01, a=1, b=1, c=2. Show the complete code to compute the distance matrix and gravity network. Do not install any packages.

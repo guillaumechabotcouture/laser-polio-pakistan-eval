@@ -1,0 +1,1 @@
+Using the LASER framework's distribution utilities, create a gamma distribution with mean 10 days and shape parameter 5 (so scale=2). Show how to create it and explain what it would be used for in an SEIR model (e.g., infectious period duration). Do not install any packages.

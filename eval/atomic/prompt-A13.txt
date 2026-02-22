@@ -1,0 +1,1 @@
+Using the LASER framework, use calc_capacity to pre-allocate agent storage for a model. Initial population is 500,000 with a crude birth rate of 44 per 1000 per year over a 10-year simulation. Show the complete code and explain what units calc_capacity expects. Do not install any packages.

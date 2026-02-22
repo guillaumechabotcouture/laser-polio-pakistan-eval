@@ -1,0 +1,1 @@
+Using the LASER framework, create a seasonal transmission profile using ValuesMap. Build a 365-day array where transmission peaks at 1.3x in summer (days 180-270) and troughs at 0.7x in winter (days 0-90, 330-365), then create a ValuesMap for 4 patches. Do not install any packages.

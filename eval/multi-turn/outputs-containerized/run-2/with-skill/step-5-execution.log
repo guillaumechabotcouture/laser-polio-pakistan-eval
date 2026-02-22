@@ -1,0 +1,62 @@
+Status: SUCCESS
+Code length: 16770 chars
+---
+Pre-allocated capacity per patch (safety_factor=2.0):
+  Patch 0 (N₀=100,000):  capacity = 177,206  (+77% headroom)
+  Patch 1 (N₀=200,000):  capacity = 354,412  (+77% headroom)
+  Patch 2 (N₀=150,000):  capacity = 265,809  (+77% headroom)
+  Patch 3 (N₀= 80,000):  capacity = 141,765  (+77% headroom)
+  Total pre-allocated: 939,192
+
+Gravity network row sums (export fractions):
+  Patch 0 → ['0.0000', '0.1118', '0.0296', '0.0086']  (total export = 0.1500)
+  Patch 1 → ['0.0539', '0.0000', '0.0809', '0.0152']  (total export = 0.1500)
+  Patch 2 → ['0.0168', '0.0951', '0.0000', '0.0381']  (total export = 0.1500)
+  Patch 3 → ['0.0120', '0.0442', '0.0938', '0.0000']  (total export = 0.1500)
+
+Seasonal profile: mean=1.0000, peak=1.30x (days 0–90 each year), trough=0.70x (days 150–240 each year)
+
+Running gravity 4-patch SEIR model — seasonal forcing + vital dynamics
+  β=0.500 d⁻¹,  R₀=5.0,  latent=4d,  infectious=10d
+  Gravity: k=0.01, a=1.0, b=1.0, c=1.5
+  Spacing: 75 km;  max export fraction: 15%
+  Patches (pop): [100000, 200000, 150000, 80000]
+  Init: 90% S / 0% E / 1% I / 9% R
+  Seasonal: winter 1.3x (d0–90/yr), summer 0.7x (d150–240/yr)
+  Vital: CBR=30/1000/yr, CDR=10/1000/yr (net ~2%/yr)
+Simulation complete.
+
+Population at start and end:
+  Day    0:     530,000
+  Day 3650:     644,150
+  Change:      +114,150  (+21.5% over 10 yr)
+  Observed annual growth: 1.97%  (expected ~2.00% from CBR–CDR = 30–10 = 20/1000/yr)
+
+All validation checks passed.
+
+Summary:
+  Peak total infectious : 242,478
+
+  Patch 0 (N₀=100k → N₁₀=121k): peak I = 44,320  day   29
+  Patch 1 (N₀=200k → N₁₀=243k): peak I = 95,441  day   27
+  Patch 2 (N₀=150k → N₁₀=181k): peak I = 70,292  day   27
+  Patch 3 (N₀=80k → N₁₀=97k): peak I = 34,799  day   29
+
+Plot saved → seir_4patch_vital_dynamics.png
+Plot saved → seir_4patch_gravity_incidence.png
+Plot saved → seir_4patch_gravity_network.png
+Plot saved → seir_4patch_vital_dynamics_pop.png
+Plot saved → seir_4patch_seasonal_profile.png
+
+--- stderr ---
+OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.
+
+Gravity 4-Patch SEIR — Seasonal + Vital Dynamics:   0%|          | 0/3650 [00:00<?, ?it/s]
+Gravity 4-Patch SEIR — Seasonal + Vital Dynamics:   0%|          | 1/3650 [00:01<1:02:07,  1.02s/it]
+Gravity 4-Patch SEIR — Seasonal + Vital Dynamics:   2%|▏         | 60/3650 [00:01<00:49, 73.20it/s] 
+Gravity 4-Patch SEIR — Seasonal + Vital Dynamics:   5%|▍         | 168/3650 [00:01<00:15, 223.05it/s]
+Gravity 4-Patch SEIR — Seasonal + Vital Dynamics:   7%|▋         | 273/3650 [00:01<00:09, 367.99it/s]
+Gravity 4-Patch SEIR — Seasonal + Vital Dynamics:  10%|█         | 381/3650 [00:01<00:06, 510.09it/s]
+Gravity 4-Patch SEIR — Seasonal + Vital Dynamics:  13%|█▎        | 481/3650 [00:01<00:05, 618.57it/s]
+Gravity 4-Patch SEIR — Seasonal + Vital Dynamics:  16%|█▌        | 579/3650 [00:01<00:04, 704.03it/s]
+Gravity 4-Patch SEIR — Seasonal + Vital Dynamics:  19%|█▊        | 676/3650 [00:01<00:03, 770.51it/

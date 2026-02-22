@@ -1,0 +1,1 @@
+Using the LASER framework, write code to vaccinate 80% of susceptible agents in a model so they become immune to transmission. IMPORTANT: LASER's TransmissionSE component checks the agent state field, not susceptibility. Show the correct way to make vaccinated agents immune. Do not install any packages.

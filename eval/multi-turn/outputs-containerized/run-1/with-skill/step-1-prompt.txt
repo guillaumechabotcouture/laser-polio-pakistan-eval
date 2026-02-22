@@ -1,0 +1,12 @@
+Using the LASER framework (laser-generic package), build a basic 4-patch SEIR
+model for a respiratory disease. Patches have populations 100k, 200k, 150k,
+80k. Disease: R0~5, latent period 4 days, infectious period 10 days. Initialize
+with 90% susceptible, 1% infectious, 9% recovered. Run for 1 year.
+
+IMPORTANT: Build ONLY a basic SEIR model for this step. Do NOT add spatial
+coupling (no gravity model), seasonal forcing, or demographics yet — those
+will be added in later steps.
+
+Write complete Python code. Do not install any packages.
+
+IMPORTANT: Output the complete Python code in a single ```python code block in your response. Do not write it to a file — include it directly in your answer.

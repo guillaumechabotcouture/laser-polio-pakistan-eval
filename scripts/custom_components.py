@@ -13,6 +13,9 @@ Components:
 
     PerPatchVaccination - (Legacy) Original vaccination setting state=RECOVERED.
 
+    PulseImportation    - Introduces infections into patch 0 at regular intervals
+                          (default: 5 infections every 90 ticks).
+
     PatchImportation    - Seeds infections in endemic corridor patches only
                           to represent cross-border and persistent transmission foci.
 
@@ -402,6 +405,57 @@ class PerPatchVaccination:
                     nodes.S[tick + 1] -= vax_by_node
                     np.maximum(nodes.S[tick + 1], 0, out=nodes.S[tick + 1])
                     nodes.R[tick + 1] += vax_by_node
+
+
+class PulseImportation:
+    """Introduces infections into patch 0 at regular intervals.
+
+    Every `period` ticks, selects up to `count` susceptible agents in patch 0
+    and sets their state to INFECTIOUS with sampled infectious durations.
+
+    Parameters:
+        model: LASER Model instance
+        infdurdist: Distribution for infectious duration sampling
+        period: Ticks between importation pulses (default: 90)
+        count: Number of infections per pulse (default: 5)
+    """
+
+    def __init__(self, model, infdurdist, period=90, count=5):
+        self.model = model
+        self.infdurdist = infdurdist
+        self.period = period
+        self.count = count
+
+    def step(self, tick):
+        if tick <= 0 or tick % self.period != 0:
+            return
+
+        people = self.model.people
+        nodes = self.model.nodes
+        active = people.count
+
+        susceptible_in_patch = np.nonzero(
+            (people.state[:active] == SEIR.State.SUSCEPTIBLE.value) &
+            (people.nodeid[:active] == 0)
+        )[0]
+
+        if len(susceptible_in_patch) == 0:
+            return
+
+        n_infect = min(self.count, len(susceptible_in_patch))
+        chosen = np.random.choice(susceptible_in_patch, size=n_infect, replace=False)
+
+        people.state[chosen] = SEIR.State.INFECTIOUS.value
+
+        samples = dists.sample_floats(
+            self.infdurdist, np.zeros(n_infect, np.float32)
+        )
+        samples = np.maximum(np.round(samples), 1).astype(people.itimer.dtype)
+        people.itimer[chosen] = samples
+
+        nodes.S[tick + 1, 0] -= n_infect
+        nodes.S[tick + 1, 0] = max(nodes.S[tick + 1, 0], 0)
+        nodes.I[tick + 1, 0] += n_infect
 
 
 class PatchImportation:

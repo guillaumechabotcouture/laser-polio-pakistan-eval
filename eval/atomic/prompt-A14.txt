@@ -1,0 +1,1 @@
+Using the LASER framework, write a custom component class called PulseImportation that introduces 5 new infections into patch 0 every 90 ticks. The component must follow LASER's component protocol with __init__(self, model) and step(self, tick) methods. Do not install any packages.

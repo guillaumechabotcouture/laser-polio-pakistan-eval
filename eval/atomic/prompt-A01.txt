@@ -1,0 +1,1 @@
+Using the LASER framework (laser-generic package), create a Model instance with a 4-patch GeoDataFrame scenario (each patch 50,000 population, all susceptible) and a PropertySet with nticks=365 and prng_seed=20250101. Show the complete Python code. Do not install any packages.

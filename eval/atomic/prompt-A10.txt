@@ -1,0 +1,1 @@
+Using the LASER framework, add all four SEIR state-tracking components (Susceptible, Exposed, Infectious, Recovered) plus Transmission to a Model instance. Show the correct execution order for these components and explain why the order matters. Do not install any packages.

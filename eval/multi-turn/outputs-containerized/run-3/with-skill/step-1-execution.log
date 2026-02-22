@@ -1,0 +1,31 @@
+Status: SUCCESS
+Code length: 6167 chars
+---
+Initial conditions:
+  Patch 0: N=100,000  S=90,000 (90%)  I=1,000 (1.0%)  R=9,000 (9%)
+  Patch 1: N=200,000  S=180,000 (90%)  I=2,000 (1.0%)  R=18,000 (9%)
+  Patch 2: N=150,000  S=135,000 (90%)  I=1,500 (1.0%)  R=13,500 (9%)
+  Patch 3: N=80,000  S=72,000 (90%)  I=800 (1.0%)  R=7,200 (9%)
+
+Running 4-patch SEIR (365 days)...
+Done.
+
+=== Epidemic Summary ===
+  Patch 0 (N=100,000): peak I = 38,635 on day 32 | total infected = 88,454 | attack rate = 98.5%
+  Patch 1 (N=200,000): peak I = 77,634 on day 32 | total infected = 176,705 | attack rate = 98.4%
+  Patch 2 (N=150,000): peak I = 58,246 on day 32 | total infected = 132,557 | attack rate = 98.4%
+  Patch 3 (N=80,000): peak I = 31,151 on day 32 | total infected = 70,738 | attack rate = 98.4%
+
+Sanity check passed: all compartments non-negative
+Plot saved → seir_4patch_basic.png
+
+--- stderr ---
+OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.
+
+BasicSEIR_4patch:   0%|          | 0/365 [00:00<?, ?it/s]
+BasicSEIR_4patch:   0%|          | 1/365 [00:00<03:28,  1.75it/s]
+BasicSEIR_4patch:   8%|▊         | 28/365 [00:00<00:06, 55.29it/s]
+BasicSEIR_4patch:  36%|███▌      | 131/365 [00:00<00:00, 271.44it/s]
+BasicSEIR_4patch:  79%|███████▊  | 287/365 [00:00<00:00, 580.97it/s]
+BasicSEIR_4patch: 100%|██████████| 365/365 [00:00<00:00, 400.61it/s]
+

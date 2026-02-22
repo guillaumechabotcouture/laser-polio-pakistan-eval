@@ -1,0 +1,1 @@
+Using the LASER framework, create an AliasedDistribution representing an age pyramid: 30% aged 0-4, 25% aged 5-14, 20% aged 15-29, 15% aged 30-49, 10% aged 50+. Show how to create it and sample 1000 ages from it. Do not install any packages.

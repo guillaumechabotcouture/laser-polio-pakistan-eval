@@ -1,0 +1,1 @@
+Using the LASER framework, create a PropertySet containing: nticks=3650, beta=0.25, gamma=1/14, sigma=1/5, prng_seed=42, and a custom parameter seasonal_amplitude=1.3. Show how to access individual parameters. Do not install any packages.

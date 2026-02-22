@@ -1,0 +1,45 @@
+Status: SUCCESS
+Code length: 12166 chars
+---
+Gravity network row sums (export fractions):
+  Patch 0 → ['0.0000', '0.1118', '0.0296', '0.0086']  (total export = 0.1500)
+  Patch 1 → ['0.0539', '0.0000', '0.0809', '0.0152']  (total export = 0.1500)
+  Patch 2 → ['0.0168', '0.0951', '0.0000', '0.0381']  (total export = 0.1500)
+  Patch 3 → ['0.0120', '0.0442', '0.0938', '0.0000']  (total export = 0.1500)
+
+Seasonal profile: mean=1.0000, peak=1.30x (days 0-90), trough=0.70x (days 150-240)
+
+Running gravity 4-patch SEIR model with seasonal forcing
+  β=0.500 d⁻¹,  R₀=5.0,  latent=4d,  infectious=10d
+  Gravity: k=0.01, a=1.0, b=1.0, c=1.5
+  Spacing: 75 km;  max export fraction: 15%
+  Patches (pop): [100000, 200000, 150000, 80000]
+  Init: 90% S / 0% E / 1% I / 9% R
+  Seasonal: winter 1.3x (d0–90), summer 0.7x (d150–240), linear transitions
+Simulation complete.
+
+All validation checks passed.
+
+Summary:
+  Peak total infectious : 242,824
+  Overall attack rate   : 89.6%
+
+  Patch 0 (N=100k): peak I = 44,178  day  29,  attack rate = 89.4%
+  Patch 1 (N=200k): peak I = 95,681  day  27,  attack rate = 89.7%
+  Patch 2 (N=150k): peak I = 70,489  day  27,  attack rate = 89.7%
+  Patch 3 (N=80k): peak I = 34,827  day  29,  attack rate = 89.3%
+
+Plot saved → seir_4patch_gravity.png
+Plot saved → seir_4patch_gravity_incidence.png
+Plot saved → seir_4patch_gravity_network.png
+Plot saved → seir_4patch_seasonal_profile.png
+
+--- stderr ---
+OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.
+
+Gravity 4-Patch SEIR — Seasonal:   0%|          | 0/365 [00:00<?, ?it/s]
+Gravity 4-Patch SEIR — Seasonal:   0%|          | 1/365 [00:00<04:27,  1.36it/s]
+Gravity 4-Patch SEIR — Seasonal:  37%|███▋      | 135/365 [00:00<00:01, 219.08it/s]
+Gravity 4-Patch SEIR — Seasonal: 100%|██████████| 365/365 [00:00<00:00, 611.19it/s]
+Gravity 4-Patch SEIR — Seasonal: 100%|██████████| 365/365 [00:00<00:00, 390.04it/s]
+

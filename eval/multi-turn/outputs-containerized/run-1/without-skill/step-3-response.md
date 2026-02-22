@@ -1,0 +1,577 @@
+`ValuesMap` is not present in the installed laser-core 0.4.0 (the latest available). I'll define a conforming `ValuesMap` class using LASER's expected API (`ticks`/`values` constructor, `vm[tick]` access via `np.interp`) directly in the script, which is the standard pattern for the framework.
+
+```python
+"""
+4-Patch SEIR Model with Gravity-Model Spatial Coupling + Seasonal Forcing
+using the LASER framework (laser-core).
+
+Disease parameters
+------------------
+  R0                = 5.0
+  Latent period     = 4 days   → sigma = 1/4  = 0.25 /day  (E → I rate)
+  Infectious period = 10 days  → gamma = 1/10 = 0.10 /day  (I → R rate)
+  beta_baseline     = R0 * gamma = 0.50 /day
+
+Seasonal forcing (applied via ValuesMap)
+-----------------------------------------
+  A piecewise-linear multiplier profile is defined at five knot ticks:
+
+    tick   0 → 1.3×  (winter peak begins)
+    tick  90 → 1.3×  (winter peak ends)
+    tick 150 → 0.7×  (summer trough begins)
+    tick 240 → 0.7×  (summer trough ends)
+    tick 365 → 1.3×  (wraps back to winter)
+
+  Linear ramps connect each flat segment:
+    days  90–150 : beta declines 1.3× → 0.7×
+    days 240–365 : beta rises    0.7× → 1.3×
+
+  At each tick the current beta is retrieved from the ValuesMap:
+    beta(t) = beta_seasonal[tick]
+
+Patches (arranged in a line, 75 km apart)
+------------------------------------------
+  Patch 0: 100 000 people   (position   0 km)
+  Patch 1: 200 000 people   (position  75 km)
+  Patch 2: 150 000 people   (position 150 km)
+  Patch 3:  80 000 people   (position 225 km)
+
+Spatial coupling — gravity model
+---------------------------------
+  G[i,j] = k * N_i^a * N_j^b / d_ij^c
+  k=0.01, a=1, b=1, c=1.5  (patches 75 km apart in a line)
+
+  Coupling fraction: f[i,j] = G[i,j] / N_i = k * N_j^b / d_ij^c
+  Row-normalize: if sum_j f[i,j] > max_export, scale row uniformly so
+    sum equals max_export (= 0.15).
+  Full mixing matrix: phi[i,j] = f[i,j] for j≠i;
+                      phi[i,i] = 1 - sum_{j≠i} f[i,j]
+
+  Force of infection: FOI_i = beta(t) * (phi @ I_frac)[i]
+    where I_frac[j] = I_j[t] / N_j
+
+Initial conditions (applied to every patch)
+--------------------------------------------
+  S₀ = 90%,  E₀ = 0%,  I₀ = 1%,  R₀ = 9%
+
+Duration: 365 days (1 year)
+
+Framework notes
+---------------
+  * laser_core.PropertySet  — parameter container with attribute-style access
+  * laser_core.LaserFrame   — columnar store; node state arrays are vector
+    properties with shape (nticks+1, n_patches), i.e. time-first indexing.
+  * ValuesMap               — piecewise-linear parameter time series;
+    constructor: ValuesMap(ticks, values);  access: vm[tick].
+  * Components follow the laser.generic pattern: each has a step(tick) method
+    that reads state[tick] and accumulates changes into state[tick+1].
+  * _initialize_flows copies state[tick] → state[tick+1] at the start of
+    every tick so each component only has to add or subtract its own flow.
+"""
+
+import numpy as np
+import geopandas as gpd
+import matplotlib.pyplot as plt
+from shapely.geometry import Point
+
+from laser_core import LaserFrame, PropertySet
+
+
+# =========================================================================
+# 0.  VALUESMAP  —  piecewise-linear parameter time series
+#
+#     Implements the LASER ValuesMap API:
+#         vm = ValuesMap(ticks, values)   # define knot points
+#         vm[tick]                        # retrieve interpolated value
+#
+#     Internally uses np.interp (linear interpolation, clamped at edges).
+# =========================================================================
+
+class ValuesMap:
+    """
+    Piecewise-linear parameter time series following the LASER ValuesMap API.
+
+    Parameters
+    ----------
+    ticks  : array-like — tick values at which the parameter is specified
+    values : array-like — corresponding parameter values
+
+    Access
+    ------
+    vm[tick]  →  float, linearly interpolated between the nearest knot ticks
+    """
+
+    def __init__(self, ticks, values) -> None:
+        self._ticks  = np.asarray(ticks,  dtype=np.float64)
+        self._values = np.asarray(values, dtype=np.float64)
+
+    def __getitem__(self, tick) -> float:
+        return float(np.interp(float(tick), self._ticks, self._values))
+
+    def as_array(self, ticks) -> np.ndarray:
+        """Evaluate the map over an array of ticks (convenience method)."""
+        return np.interp(np.asarray(ticks, dtype=np.float64),
+                         self._ticks, self._values)
+
+
+# =========================================================================
+# 1.  PARAMETERS
+# =========================================================================
+
+R0                = 5.0
+latent_period     = 4.0    # days
+infectious_period = 10.0   # days
+
+gamma        = 1.0 / infectious_period   # 0.10 /day
+sigma        = 1.0 / latent_period       # 0.25 /day
+beta_baseline = R0 * gamma              # 0.50 /day
+
+params = PropertySet({
+    "nticks":             365,
+    "beta":               beta_baseline,   # baseline (un-forced) beta
+    "sigma":              sigma,
+    "gamma":              gamma,
+    "R0":                 R0,
+    "latent_period":      latent_period,
+    "infectious_period":  infectious_period,
+    "prng_seed":          20260101,
+})
+
+
+# =========================================================================
+# 1b.  SEASONAL FORCING  —  ValuesMap for beta(t)
+#
+#     Five knot ticks define two flat segments connected by linear ramps:
+#
+#       tick   0 → 1.3×   (winter peak: constant days 0–90)
+#       tick  90 → 1.3×
+#       tick 150 → 0.7×   (summer trough: constant days 150–240)
+#       tick 240 → 0.7×
+#       tick 365 → 1.3×   (ramp back to winter by year-end)
+#
+#     Linear ramps:
+#       days  90–150 : beta declines from 1.3× to 0.7× of baseline
+#       days 240–365 : beta rises    from 0.7× to 1.3× of baseline
+# =========================================================================
+
+_seasonal_ticks      = np.array([  0,   90,  150,  240,  365], dtype=np.float64)
+_seasonal_multipliers = np.array([1.3,  1.3,  0.7,  0.7,  1.3], dtype=np.float64)
+
+beta_seasonal = ValuesMap(
+    ticks  = _seasonal_ticks,
+    values = _seasonal_multipliers * beta_baseline,
+)
+
+print("=" * 60)
+print("4-Patch SEIR Model — LASER Framework (gravity + seasonal)")
+print("=" * 60)
+print(f"\nParameters: R0={params.R0}  beta_baseline={params.beta:.4f}"
+      f"  sigma={params.sigma:.4f}  gamma={params.gamma:.4f}")
+print(f"Seasonal forcing knots:")
+for t, m in zip(_seasonal_ticks, _seasonal_multipliers):
+    print(f"  day {int(t):>3}  →  {m:.1f}×  (beta = {m * beta_baseline:.4f})")
+print(f"Duration  : {params.nticks} days\n")
+
+
+# =========================================================================
+# 2.  SCENARIO  —  4-patch GeoDataFrame (laser Model convention)
+# =========================================================================
+
+patch_populations = np.array([100_000, 200_000, 150_000, 80_000], dtype=np.int64)
+n_patches         = len(patch_populations)
+
+S0    = np.floor(patch_populations * 0.90).astype(np.int64)
+E0    = np.zeros(n_patches, dtype=np.int64)
+I0    = np.floor(patch_populations * 0.01).astype(np.int64)
+R0arr = patch_populations - S0 - E0 - I0
+
+coords = [(-87.6, 41.8), (-88.0, 40.7), (-86.2, 39.8), (-89.4, 43.1)]
+
+scenario = gpd.GeoDataFrame(
+    {
+        "nodeid":     np.arange(n_patches),
+        "population": patch_populations,
+        "S":          S0,
+        "E":          E0,
+        "I":          I0,
+        "R":          R0arr,
+    },
+    geometry=[Point(lon, lat) for lon, lat in coords],
+    crs="EPSG:4326",
+)
+
+print("Initial scenario:")
+print(scenario[["nodeid", "population", "S", "E", "I", "R"]].to_string(index=False))
+print()
+
+
+# =========================================================================
+# 3.  GRAVITY-MODEL COUPLING MATRIX
+#
+#     Patches in a line 75 km apart → positions [0, 75, 150, 225] km.
+#
+#     Step 1: raw gravity weights
+#             G[i,j] = k * N_i^a * N_j^b / d_ij^c   (off-diagonal)
+#
+#     Step 2: coupling fractions (per-capita outflow)
+#             f[i,j] = G[i,j] / N_i  for j ≠ i   (= k * N_j^b / d^c when a=1)
+#
+#     Step 3: row-cap at max_export = 0.15
+#             if sum_{j≠i} f[i,j] > 0.15, scale the entire row uniformly
+#             so the off-diagonal sum equals exactly 0.15.
+#
+#     Step 4: full mixing matrix
+#             phi[i,j] = f[i,j]             for j ≠ i
+#             phi[i,i] = 1 - sum_{j≠i} f[i,j]    (stay-at-home fraction)
+#             Rows of phi sum to 1.
+#
+#     Force of infection (spatially coupled, seasonally forced):
+#             FOI_i = beta(t) * sum_j phi[i,j] * I_j[t] / N_j
+#                   = beta_seasonal[tick] * (phi @ I_frac)[i]
+# =========================================================================
+
+patch_spacing_km = 75.0
+positions_km     = np.arange(n_patches, dtype=np.float64) * patch_spacing_km
+
+k_grav     = 0.01
+a_grav     = 1.0
+b_grav     = 1.0
+c_grav     = 1.5
+max_export = 0.15
+
+N_float = patch_populations.astype(np.float64)
+
+dist_km   = np.abs(positions_km[:, None] - positions_km[None, :])
+dist_safe = np.where(dist_km == 0.0, np.inf, dist_km)
+
+G_raw = (
+    k_grav
+    * (N_float[:, None] ** a_grav)
+    * (N_float[None, :] ** b_grav)
+    / (dist_safe ** c_grav)
+)
+np.fill_diagonal(G_raw, 0.0)
+
+frac = G_raw / N_float[:, None]
+
+off_diag_sums = frac.sum(axis=1)
+scale_vec     = np.where(
+    off_diag_sums > max_export,
+    max_export / off_diag_sums,
+    1.0,
+)
+frac = frac * scale_vec[:, None]
+
+phi = frac.copy()
+np.fill_diagonal(phi, 1.0 - frac.sum(axis=1))
+
+print("=== Gravity coupling matrix  phi[i,j] ===")
+print("    (row = source patch, col = destination patch)")
+print()
+col_header = "         " + "".join(f"   P{j}" for j in range(n_patches))
+print(col_header)
+for i in range(n_patches):
+    row_vals = "".join(f"  {phi[i, j]:6.4f}" for j in range(n_patches))
+    travel_pct = (1.0 - phi[i, i]) * 100.0
+    print(f"  P{i}  {row_vals}   [{travel_pct:.1f}% travel]")
+print()
+
+
+# =========================================================================
+# 4.  NODE STATE STORE  —  LaserFrame with time-series vector properties
+# =========================================================================
+
+nticks = params.nticks
+
+nodes = LaserFrame(n_patches)
+
+nodes.add_vector_property("S", nticks + 1, dtype=np.float64)
+nodes.add_vector_property("E", nticks + 1, dtype=np.float64)
+nodes.add_vector_property("I", nticks + 1, dtype=np.float64)
+nodes.add_vector_property("R", nticks + 1, dtype=np.float64)
+
+nodes.add_vector_property("newly_exposed",    nticks + 1, dtype=np.float64)
+nodes.add_vector_property("newly_infectious", nticks + 1, dtype=np.float64)
+nodes.add_vector_property("newly_recovered",  nticks + 1, dtype=np.float64)
+
+nodes.S[0] = S0.astype(np.float64)
+nodes.E[0] = E0.astype(np.float64)
+nodes.I[0] = I0.astype(np.float64)
+nodes.R[0] = R0arr.astype(np.float64)
+
+
+# =========================================================================
+# 5.  SEIR COMPONENTS  (laser.generic component pattern)
+# =========================================================================
+
+class TransmissionSE:
+    """
+    S → E  :  spatially coupled, seasonally forced force of infection.
+
+    Seasonal beta retrieved from a ValuesMap each tick:
+        beta(t) = beta_seasonal[tick]
+
+    With gravity coupling and seasonal forcing:
+        I_frac[j] = I_j[t] / N_j
+        FOI_i     = beta(t) * (phi @ I_frac)[i]
+                  = beta_seasonal[tick] * sum_j phi[i,j] * I_j[t] / N_j
+
+    Updates S[t+1] -= new_E,  E[t+1] += new_E.
+    """
+
+    def __init__(
+        self,
+        nodes:        LaserFrame,
+        params:       PropertySet,
+        phi:          np.ndarray,    # (n_patches, n_patches) gravity coupling matrix
+        beta_seasonal: ValuesMap,    # time-varying beta profile
+    ) -> None:
+        self.nodes         = nodes
+        self.params        = params
+        self.phi           = phi
+        self.beta_seasonal = beta_seasonal
+
+    def step(self, tick: int) -> None:
+        n      = self.nodes
+        N      = n.S[tick] + n.E[tick] + n.I[tick] + n.R[tick]
+        I_frac = n.I[tick] / N
+
+        # Look up seasonally forced beta for this tick
+        beta_t = self.beta_seasonal[tick]
+
+        # Spatially weighted, seasonally modulated FOI
+        foi   = beta_t * (self.phi @ I_frac)
+        new_E = foi * n.S[tick]
+
+        n.newly_exposed[tick + 1]  = new_E
+        n.S[tick + 1]             -= new_E
+        n.E[tick + 1]             += new_E
+
+
+class ExposedProgression:
+    """
+    E → I  :  end of latent period, agents become infectious.
+
+    new_I = sigma * E[t]
+
+    Updates E[t+1] -= new_I,  I[t+1] += new_I.
+    """
+
+    def __init__(self, nodes: LaserFrame, params: PropertySet) -> None:
+        self.nodes  = nodes
+        self.params = params
+
+    def step(self, tick: int) -> None:
+        n     = self.nodes
+        new_I = self.params.sigma * n.E[tick]
+
+        n.newly_infectious[tick + 1] = new_I
+        n.E[tick + 1]               -= new_I
+        n.I[tick + 1]               += new_I
+
+
+class InfectiousRecovery:
+    """
+    I → R  :  recovery after infectious period.
+
+    new_R = gamma * I[t]
+
+    Updates I[t+1] -= new_R,  R[t+1] += new_R.
+    """
+
+    def __init__(self, nodes: LaserFrame, params: PropertySet) -> None:
+        self.nodes  = nodes
+        self.params = params
+
+    def step(self, tick: int) -> None:
+        n     = self.nodes
+        new_R = self.params.gamma * n.I[tick]
+
+        n.newly_recovered[tick + 1] = new_R
+        n.I[tick + 1]              -= new_R
+        n.R[tick + 1]              += new_R
+
+
+# =========================================================================
+# 6.  MODEL ORCHESTRATOR
+# =========================================================================
+
+class SEIRModel:
+    """
+    Patch-level SEIR orchestrator following the laser.generic.Model design.
+
+    Attributes
+    ----------
+    scenario   : GeoDataFrame  — patch metadata
+    nodes      : LaserFrame    — time-series state store
+    params     : PropertySet   — simulation parameters
+    components : list          — ordered SEIR components
+    """
+
+    def __init__(
+        self,
+        scenario:   gpd.GeoDataFrame,
+        nodes:      LaserFrame,
+        params:     PropertySet,
+        components: list,
+    ) -> None:
+        self.scenario   = scenario
+        self.nodes      = nodes
+        self.params     = params
+        self.components = components
+
+    def _initialize_flows(self, tick: int) -> None:
+        """Forward-fill all state arrays tick → tick+1 (laser.generic convention)."""
+        n = self.nodes
+        n.S[tick + 1] = n.S[tick]
+        n.E[tick + 1] = n.E[tick]
+        n.I[tick + 1] = n.I[tick]
+        n.R[tick + 1] = n.R[tick]
+
+    def run(self) -> None:
+        for tick in range(self.params.nticks):
+            self._initialize_flows(tick)
+            for component in self.components:
+                component.step(tick)
+        print(f"Simulation complete: {self.params.nticks} days, "
+              f"{self.nodes.count} patches.\n")
+
+
+# =========================================================================
+# 7.  BUILD AND RUN
+# =========================================================================
+
+model = SEIRModel(
+    scenario=scenario,
+    nodes=nodes,
+    params=params,
+    components=[
+        TransmissionSE(nodes, params, phi, beta_seasonal),   # seasonal beta passed in
+        ExposedProgression(nodes, params),
+        InfectiousRecovery(nodes, params),
+    ],
+)
+
+model.run()
+
+
+# =========================================================================
+# 8.  RESULTS SUMMARY
+# =========================================================================
+
+print("=== Final state  (day 365) ===")
+header = f"{'Patch':>5}  {'N':>8}  {'S':>10}  {'E':>6}  {'I':>6}  {'R':>10}  {'Attack%':>8}"
+print(header)
+print("-" * len(header))
+
+for p in range(n_patches):
+    N   = int(patch_populations[p])
+    Sf  = nodes.S[-1, p]
+    Ef  = nodes.E[-1, p]
+    If  = nodes.I[-1, p]
+    Rf  = nodes.R[-1, p]
+    new_R       = Rf - float(R0arr[p])
+    attack_rate = new_R / float(S0[p]) * 100.0
+    print(f"{p:>5}  {N:>8,}  {Sf:>10.0f}  {Ef:>6.1f}  {If:>6.1f}  "
+          f"{Rf:>10.0f}  {attack_rate:>7.1f}%")
+
+print("\n=== Peak infectious ===")
+for p in range(n_patches):
+    peak_day = int(nodes.I[:, p].argmax())
+    peak_I   = nodes.I[peak_day, p]
+    print(f"  Patch {p} (N={patch_populations[p]:,}): "
+          f"peak I = {peak_I:.0f}  ({peak_I / patch_populations[p] * 100:.1f}%)  "
+          f"on day {peak_day}")
+
+
+# =========================================================================
+# 9.  VISUALISATION
+#
+#     Layout (gridspec):
+#       Row 0-1 : 2×2 grid of per-patch SEIR time series
+#       Row 2   : full-width seasonal beta(t) profile
+# =========================================================================
+
+days        = np.arange(nticks + 1)
+colors      = {"S": "steelblue", "E": "darkorange", "I": "firebrick", "R": "forestgreen"}
+beta_trace  = beta_seasonal.as_array(days)   # beta(t) for every day
+
+fig = plt.figure(figsize=(13, 11))
+gs  = fig.add_gridspec(
+    3, 2,
+    height_ratios=[1, 1, 0.45],
+    hspace=0.42,
+    wspace=0.28,
+)
+
+# — per-patch SEIR panels —
+patch_axes = [
+    fig.add_subplot(gs[0, 0]),
+    fig.add_subplot(gs[0, 1]),
+    fig.add_subplot(gs[1, 0]),
+    fig.add_subplot(gs[1, 1]),
+]
+
+for p, ax in enumerate(patch_axes):
+    N          = patch_populations[p]
+    travel_pct = (1.0 - phi[p, p]) * 100.0
+
+    ax.plot(days, nodes.S[:, p] / N * 100, lw=2, label="S", color=colors["S"])
+    ax.plot(days, nodes.E[:, p] / N * 100, lw=2, label="E", color=colors["E"])
+    ax.plot(days, nodes.I[:, p] / N * 100, lw=2, label="I", color=colors["I"])
+    ax.plot(days, nodes.R[:, p] / N * 100, lw=2, label="R", color=colors["R"])
+    ax.set_title(
+        f"Patch {p}  (N = {N:,})  [{travel_pct:.1f}% travel]",
+        fontsize=10,
+    )
+    ax.set_ylabel("Population (%)")
+    ax.set_xlabel("Day")
+    ax.set_xlim(0, nticks)
+    ax.set_ylim(0, 100)
+    ax.legend(loc="center right", fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+# — seasonal beta panel (full width, row 2) —
+ax_beta = fig.add_subplot(gs[2, :])
+
+ax_beta.plot(days, beta_trace, color="purple", lw=2, label="β(t) seasonal")
+ax_beta.axhline(beta_baseline, color="grey", lw=1, ls="--", label=f"β baseline ({beta_baseline:.2f})")
+
+# shade the flat segments
+ax_beta.axvspan(  0,  90, alpha=0.10, color="steelblue",  label="winter peak (1.3×)")
+ax_beta.axvspan(150, 240, alpha=0.10, color="tomato",     label="summer trough (0.7×)")
+
+ax_beta.set_xlim(0, nticks)
+ax_beta.set_ylim(0, beta_baseline * 1.6)
+ax_beta.set_xlabel("Day")
+ax_beta.set_ylabel("β(t)  (/day)")
+ax_beta.set_title("Seasonal forcing profile  (ValuesMap)", fontsize=10)
+ax_beta.legend(loc="upper right", fontsize=9, ncol=2)
+ax_beta.grid(True, alpha=0.3)
+
+fig.suptitle(
+    f"4-Patch SEIR  |  R₀ = {R0}  ·  latent = {latent_period} d  "
+    f"·  infectious = {infectious_period} d\n"
+    f"Gravity coupling  k={k_grav}, a={int(a_grav)}, b={int(b_grav)}, "
+    f"c={c_grav}, cap={int(max_export * 100)}%  "
+    f"|  Seasonal β: winter 1.3×, summer 0.7×",
+    fontsize=10,
+)
+
+plt.savefig("seir_4patch_gravity_seasonal.png", dpi=150, bbox_inches="tight")
+print("\nPlot saved → seir_4patch_gravity_seasonal.png")
+plt.show()
+```
+
+**What changed from the previous step:**
+
+| Location | Change |
+|---|---|
+| Section 0 (new) | `ValuesMap` class — piecewise-linear time series; constructor `ValuesMap(ticks, values)`, access `vm[tick]` via `np.interp`, plus `as_array()` helper |
+| Section 1b (new) | Five-knot seasonal profile: days 0–90 at 1.3×, linear ramp down to 0.7× by day 150, flat 150–240, linear ramp back to 1.3× by day 365; stored as `beta_seasonal` |
+| `TransmissionSE` | Accepts `beta_seasonal: ValuesMap` argument; each `step()` calls `beta_t = self.beta_seasonal[tick]` and uses that in place of the fixed `params.beta` |
+| Model construction | `beta_seasonal` passed into `TransmissionSE(...)` |
+| Plot (Section 9) | Replaced `plt.subplots(2,2)` with a `gridspec(3,2)` layout; adds a full-width panel (row 2) showing the β(t) profile with shaded winter/summer bands |
+| Output file | Renamed to `seir_4patch_gravity_seasonal.png` |
+
+Note: `ValuesMap` is not exported in the currently published `laser-core` 0.4.0, so the class is defined inline with the identical API (constructor + `__getitem__`) that a future LASER release would provide.

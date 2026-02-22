@@ -1,0 +1,1 @@
+Using the LASER framework, create a 365-day seasonal forcing array for disease transmission where the peak is 1.5x the baseline and the trough is 0.5x the baseline, with the annual mean equal to approximately 1.0. Show the complete code and verify the mean. Do not install any packages.

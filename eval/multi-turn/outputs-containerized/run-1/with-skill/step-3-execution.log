@@ -1,0 +1,47 @@
+Status: SUCCESS
+Code length: 14900 chars
+---
+beta = 0.5000  (R0=5.0, infectious_period=10.0d)
+Initial conditions verified:
+  Total N=530,000, S=477,000 (90%), I=5,300 (1%), R=47,700 (9%), E=0 (0%)
+
+Gravity network (k=0.01, a=1.0, b=1.0, c=1.5):
+  network[i,j] = fraction of patch i's FOI exported to patch j
+[[0.     0.1118 0.0296 0.0086]
+ [0.0539 0.     0.0809 0.0152]
+ [0.0168 0.0951 0.     0.0381]
+ [0.012  0.0442 0.0938 0.    ]]
+  Row sums (FOI export fraction per patch): [0.15 0.15 0.15 0.15]
+  15% cap applied to: 4/4 patches
+
+Seasonal profile (365-day):
+  mean=1.0000, min=0.7000 (day 149), max=1.3000 (day 0)
+  Winter peak  (days  0– 90): 1.30–1.30x
+  Summer trough(days150–240): 0.70–0.70x
+  ValuesMap shape: (365, 4)  (nticks=365, nnodes=4)
+
+Running simulation ...
+Done.
+
+Verification passed.
+Patch        Population   Total Infected  Attack Rate
+----------------------------------------------------
+Patch 0          100,000          89,358        89.4%
+Patch 1          200,000         179,462        89.7%
+Patch 2          150,000         134,508        89.7%
+Patch 3           80,000          71,410        89.3%
+----------------------------------------------------
+Total           530,000         474,738        89.6%
+
+Plot saved: seir_4patch_gravity.png
+
+--- stderr ---
+OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.
+
+4-Patch SEIR with Gravity Coupling + Seasonal Forcing:   0%|          | 0/365 [00:00<?, ?it/s]
+4-Patch SEIR with Gravity Coupling + Seasonal Forcing:   0%|          | 1/365 [00:00<05:25,  1.12it/s]
+4-Patch SEIR with Gravity Coupling + Seasonal Forcing:   7%|▋         | 25/365 [00:00<00:10, 33.88it/s]
+4-Patch SEIR with Gravity Coupling + Seasonal Forcing:  31%|███       | 112/365 [00:01<00:01, 170.71it/s]
+4-Patch SEIR with Gravity Coupling + Seasonal Forcing:  65%|██████▌   | 238/365 [00:01<00:00, 376.80it/s]
+4-Patch SEIR with Gravity Coupling + Seasonal Forcing: 100%|██████████| 365/365 [00:01<00:00, 285.63it/s]
+

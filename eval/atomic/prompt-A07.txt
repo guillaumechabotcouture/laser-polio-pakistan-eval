@@ -1,0 +1,1 @@
+Using the LASER framework, given a gravity network matrix for 4 patches, apply row normalization so that no patch exports more than 20% of its force of infection. Show the complete code using LASER's row_normalizer function. Do not install any packages.
