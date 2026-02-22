@@ -1,0 +1,41 @@
+Status: SUCCESS
+Code length: 12677 chars
+---
+Gravity migration network (fraction of population per day):
+            Patch 0     Patch 1     Patch 2     Patch 3
+Patch 0:  0.00000  0.11176  0.02964  0.00860
+Patch 1:  0.05390  0.00000  0.08085  0.01525
+Patch 2:  0.01682  0.09513  0.00000  0.03805
+Patch 3:  0.01203  0.04420  0.09377  0.00000
+Row sums: [0.15 0.15 0.15 0.15]
+
+Initial conditions:
+  Patch 0: N=100,000  S=90,000 (90%)  I=1,000 (1.0%)  R=9,000 (9%)
+  Patch 1: N=200,000  S=180,000 (90%)  I=2,000 (1.0%)  R=18,000 (9%)
+  Patch 2: N=150,000  S=135,000 (90%)  I=1,500 (1.0%)  R=13,500 (9%)
+  Patch 3: N=80,000  S=72,000 (90%)  I=800 (1.0%)  R=7,200 (9%)
+
+Seasonal profile  (normalised mean = 1.000000)
+  Winter (days 0-90):    1.300× beta  (effective beta = 0.6500)
+  Summer (days 150-240): 0.700× beta  (effective beta = 0.3500)
+
+Running 4-patch SEIR with gravity coupling + seasonal forcing (365 days)...
+Done.
+
+=== Epidemic Summary ===
+  Patch 0 (N=100,000): peak I = 45,338 on day 29 | total infected = 89,359 | attack rate = 99.4%
+  Patch 1 (N=200,000): peak I = 97,868 on day 27 | total infected = 179,486 | attack rate = 99.7%
+  Patch 2 (N=150,000): peak I = 72,054 on day 27 | total infected = 134,472 | attack rate = 99.6%
+  Patch 3 (N=80,000): peak I = 35,469 on day 29 | total infected = 71,396 | attack rate = 99.2%
+
+Sanity check passed: all compartments non-negative
+Plot saved → seir_4patch_gravity_seasonal.png
+
+--- stderr ---
+OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.
+
+GravitySEIR_4patch_Seasonal:   0%|          | 0/365 [00:00<?, ?it/s]
+GravitySEIR_4patch_Seasonal:   0%|          | 1/365 [00:00<04:45,  1.27it/s]
+GravitySEIR_4patch_Seasonal:  46%|████▌     | 168/365 [00:00<00:00, 257.88it/s]
+GravitySEIR_4patch_Seasonal: 100%|██████████| 365/365 [00:00<00:00, 372.83it/s]
+

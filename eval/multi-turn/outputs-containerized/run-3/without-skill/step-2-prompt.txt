@@ -1,0 +1,6 @@
+Add gravity-model spatial coupling to this model. The 4 patches are arranged
+in a line 75km apart. Use gravity parameters k=0.01, a=1, b=1, c=1.5.
+Row-normalize so no patch exports more than 15%. Update the code and show the
+complete modified script. Do not install any packages.
+
+IMPORTANT: Output the complete Python code in a single ```python code block in your response. Do not write it to a file — include it directly in your answer.

@@ -1,0 +1,258 @@
+Here is the code from the previous step:
+
+```python
+"""
+Gravity-Model 4-Patch SEIR — LASER Framework
+=============================================
+Respiratory disease: R0=5, latent period=4d, infectious period=10d
+Patches:  100k / 200k / 150k / 80k (east-west line, 75 km apart)
+Initial:  90% S, 0% E, 1% I, 9% R
+Duration: 365 days (1 year)
+Gravity coupling: k=0.01, a=1, b=1, c=1.5 | Row-normalised ≤ 15% export
+"""
+
+import numpy as np
+import geopandas as gpd
+from shapely.geometry import Point
+from laser.core.propertyset import PropertySet
+import laser.core.distributions as dists
+from laser.generic import SEIR, Model
+import matplotlib.pyplot as plt
+
+# ── 1. Patch populations and initial conditions ───────────────────────────────
+populations = np.array([100_000, 200_000, 150_000, 80_000], dtype=np.int32)
+n_patches = len(populations)
+
+I_init = np.round(0.01 * populations).astype(np.int32)
+R_init = np.round(0.09 * populations).astype(np.int32)
+E_init = np.zeros(n_patches, dtype=np.int32)
+S_init = populations - E_init - I_init - R_init
+
+assert np.all(S_init + E_init + I_init + R_init == populations), \
+    "Initial S+E+I+R must equal population in every patch"
+assert np.all(I_init > 0), "Every patch needs at least one initial infectious agent"
+
+# ── 2. Gravity-model migration network ───────────────────────────────────────
+# Patches arranged in an east-west line, 75 km apart:
+#   Patch 0 ─── 75 km ─── Patch 1 ─── 75 km ─── Patch 2 ─── 75 km ─── Patch 3
+#
+# Gravity flow:  W[i,j] = k * pop_i^a * pop_j^b / dist[i,j]^c
+# Per-capita:    network[i,j] = W[i,j] / pop_i
+# Row-normalise: if sum_j(network[i,j]) > MAX_EXPORT, scale row down
+
+GRAVITY_K  = 0.01
+GRAVITY_A  = 1.0
+GRAVITY_B  = 1.0
+GRAVITY_C  = 1.5
+MAX_EXPORT = 0.15   # max fraction of patch i population that leaves per tick
+
+# Pairwise distances (km) for a 1-D line layout
+pos_km  = np.array([0.0, 75.0, 150.0, 225.0])
+dist_km = np.abs(pos_km[:, None] - pos_km[None, :])   # shape (4, 4)
+
+# Gravity weights via broadcasting.
+# Add identity to distance matrix so the zero diagonal doesn't cause /0;
+# the diagonal is zeroed out immediately after.
+pop_f     = populations.astype(np.float64)
+dist_safe = dist_km + np.eye(n_patches)                # diagonal = 1.0 (dummy)
+
+network = (
+    GRAVITY_K
+    * (pop_f[:, None] ** GRAVITY_A)
+    * (pop_f[None, :] ** GRAVITY_B)
+    / (dist_safe ** GRAVITY_C)
+)
+np.fill_diagonal(network, 0.0)   # no self-migration
+
+# Convert raw weights to per-capita daily rates  (divide each row i by pop_i)
+network /= pop_f[:, None]
+
+# Row-normalise: clamp total daily outflow to MAX_EXPORT per patch
+row_sums = network.sum(axis=1)
+scale    = np.where(row_sums > MAX_EXPORT, MAX_EXPORT / row_sums, 1.0)
+network *= scale[:, None]
+
+# Sanity checks on the network
+assert np.all(network >= 0),                             "Negative migration rate"
+assert np.all(network.sum(axis=1) <= MAX_EXPORT + 1e-9), "Row sum exceeds cap"
+np.testing.assert_array_almost_equal(np.diag(network), 0, err_msg="Diagonal non-zero")
+
+print("Gravity migration network (fraction of population per day):")
+print("         " + "  ".join(f"   Patch {j}" for j in range(n_patches)))
+for i in range(n_patches):
+    vals = "  ".join(f"{network[i, j]:.5f}" for j in range(n_patches))
+    print(f"Patch {i}:  {vals}")
+print(f"Row sums: {network.sum(axis=1).round(4)}")
+
+# ── 3. Scenario GeoDataFrame ──────────────────────────────────────────────────
+# East-west line: 75 km ≈ 0.803° longitude at 33°N  (for geometry display only;
+# distances are computed analytically above in km)
+LON_PER_KM = 1.0 / (111.32 * np.cos(np.radians(33.0)))
+
+scenario = gpd.GeoDataFrame(
+    {
+        "nodeid":     np.arange(n_patches),
+        "name":       [f"Patch {i}" for i in range(n_patches)],
+        "population": populations,
+        "S":          S_init,
+        "E":          E_init,
+        "I":          I_init,
+        "R":          R_init,
+        "geometry":   [Point(72.0 + i * 75.0 * LON_PER_KM, 33.0)
+                       for i in range(n_patches)],
+    },
+    crs="EPSG:4326",
+)
+
+print("\nInitial conditions:")
+for _, row in scenario.iterrows():
+    N = row["population"]
+    print(
+        f"  {row['name']}: N={N:,}  "
+        f"S={row['S']:,} ({row['S']/N*100:.0f}%)  "
+        f"I={row['I']:,} ({row['I']/N*100:.1f}%)  "
+        f"R={row['R']:,} ({row['R']/N*100:.0f}%)"
+    )
+
+# ── 4. Model parameters ───────────────────────────────────────────────────────
+# beta = R0 / infectious_period = 5 / 10 = 0.5 per day
+nticks = 365
+
+params = PropertySet({
+    "prng_seed": 42,
+    "nticks":    nticks,
+    "beta":      0.5,
+})
+
+# ── 5. Duration distributions ─────────────────────────────────────────────────
+expdurdist = dists.constant_int(4)    # latent period:     exactly 4 days
+infdurdist = dists.constant_int(10)   # infectious period: exactly 10 days
+
+# ── 6. Construct model and assign gravity network ─────────────────────────────
+model = Model(scenario, params)
+model.network = network   # replace default zero matrix with gravity coupling
+
+# ── 7. Component list ─────────────────────────────────────────────────────────
+model.components = [
+    SEIR.Susceptible(model),
+    SEIR.Exposed(model, expdurdist, infdurdist),
+    SEIR.Infectious(model, infdurdist),
+    SEIR.Recovered(model),
+    SEIR.Transmission(model, expdurdist, seasonality=None),
+]
+
+# ── 8. Run ────────────────────────────────────────────────────────────────────
+print("\nRunning 4-patch SEIR with gravity coupling (365 days)...")
+model.run("GravitySEIR_4patch")
+print("Done.\n")
+
+# ── 9. Epidemic summary ───────────────────────────────────────────────────────
+print("=== Epidemic Summary ===")
+for idx in range(n_patches):
+    N         = int(populations[idx])
+    I_trace   = model.nodes.I[:nticks, idx]
+    peak_I    = int(I_trace.max())
+    peak_day  = int(I_trace.argmax())
+    S_final   = int(model.nodes.S[nticks - 1, idx])
+    total_inf = int(model.nodes.newly_infected[:nticks, idx].sum())
+    attack_rt = (N - S_final) / N * 100
+    print(
+        f"  Patch {idx} (N={N:,}): "
+        f"peak I = {peak_I:,} on day {peak_day} | "
+        f"total infected = {total_inf:,} | "
+        f"attack rate = {attack_rt:.1f}%"
+    )
+
+for name, arr in [("S", model.nodes.S), ("E", model.nodes.E),
+                  ("I", model.nodes.I), ("R", model.nodes.R)]:
+    assert np.all(arr[:nticks, :] >= 0), f"Negative values in {name} compartment"
+print("\nSanity check passed: all compartments non-negative")
+
+# ── 10. Figures ───────────────────────────────────────────────────────────────
+# Layout: 3 rows × 2 cols
+#   Row 1: migration heatmap  |  daily outflow bar chart
+#   Row 2: Patch 0 SEIR curves  |  Patch 1 SEIR curves
+#   Row 3: Patch 2 SEIR curves  |  Patch 3 SEIR curves
+
+PATCH_COLORS = ["steelblue", "darkorange", "forestgreen", "crimson"]
+
+fig = plt.figure(figsize=(14, 11))
+fig.suptitle(
+    "4-Patch SEIR — Gravity Coupling\n"
+    r"R$_0$=5, Latent=4d, Infectious=10d  |  k=0.01, a=1, b=1, c=1.5  |  Max export 15%",
+    fontsize=13,
+)
+
+# Panel 1 — migration network heatmap (origin = row, destination = column)
+ax_net = fig.add_subplot(3, 2, 1)
+im = ax_net.imshow(network * 100, cmap="YlOrRd", aspect="auto", vmin=0)
+plt.colorbar(im, ax=ax_net, label="% of pop / day")
+tick_labels = [f"P{j}\n({populations[j]//1000}k)" for j in range(n_patches)]
+ax_net.set_xticks(range(n_patches))
+ax_net.set_yticks(range(n_patches))
+ax_net.set_xticklabels(tick_labels, fontsize=8)
+ax_net.set_yticklabels([f"P{i}" for i in range(n_patches)], fontsize=8)
+ax_net.set_xlabel("Destination", fontsize=8)
+ax_net.set_ylabel("Origin", fontsize=8)
+ax_net.set_title("Daily migration rates\n(row = origin patch)", fontsize=9)
+for i in range(n_patches):
+    for j in range(n_patches):
+        txt_color = "white" if network[i, j] > 0.09 else "black"
+        ax_net.text(j, i, f"{network[i, j]*100:.2f}%",
+                    ha="center", va="center", fontsize=7, color=txt_color)
+
+# Panel 2 — total daily outflow per patch
+ax_bar = fig.add_subplot(3, 2, 2)
+bar_labels = [f"Patch {i}\n({populations[i]//1000}k)" for i in range(n_patches)]
+ax_bar.bar(bar_labels, network.sum(axis=1) * 100, color=PATCH_COLORS, alpha=0.85)
+ax_bar.axhline(MAX_EXPORT * 100, color="red", linestyle="--", linewidth=1.2,
+               label=f"Cap ({int(MAX_EXPORT*100)}%)")
+ax_bar.set_ylabel("Total daily outflow (%)")
+ax_bar.set_ylim(0, MAX_EXPORT * 100 * 1.4)
+ax_bar.set_title("Total outflow per patch", fontsize=9)
+ax_bar.legend(fontsize=8)
+ax_bar.grid(axis="y", alpha=0.3)
+
+# Panels 3–6 — SEIR curves per patch
+for idx in range(n_patches):
+    ax = fig.add_subplot(3, 2, idx + 3)
+    N   = populations[idx]
+    t   = np.arange(nticks)
+    pct = 100.0 / N
+
+    ax.plot(t, model.nodes.S[:nticks, idx] * pct,
+            label="S", color="steelblue",   linewidth=1.8)
+    ax.plot(t, model.nodes.E[:nticks, idx] * pct,
+            label="E", color="darkorange",  linewidth=1.8)
+    ax.plot(t, model.nodes.I[:nticks, idx] * pct,
+            label="I", color="crimson",     linewidth=1.8)
+    ax.plot(t, model.nodes.R[:nticks, idx] * pct,
+            label="R", color="forestgreen", linewidth=1.8)
+
+    peak_day = int(model.nodes.I[:nticks, idx].argmax())
+    peak_I   = int(model.nodes.I[:nticks, idx].max())
+    ax.axvline(peak_day, color="crimson", linestyle="--", linewidth=1, alpha=0.45)
+
+    ax.set_title(
+        f"Patch {idx}  (N={N:,})\nPeak I = {peak_I:,} on day {peak_day}",
+        fontsize=9,
+    )
+    ax.set_xlabel("Day")
+    ax.set_ylabel("% of population")
+    ax.set_xlim(0, nticks - 1)
+    ax.set_ylim(0, 100)
+    ax.legend(loc="center right", fontsize=8)
+    ax.grid(alpha=0.3)
+
+plt.tight_layout()
+plt.savefig("seir_4patch_gravity.png", dpi=150, bbox_inches="tight")
+plt.show()
+print("Plot saved → seir_4patch_gravity.png")
+```
+
+Add seasonal forcing to the transmission. Winter peak (days 0-90) at 1.3x
+baseline, summer trough (days 150-240) at 0.7x baseline. Use LASER's ValuesMap
+to create the seasonal profile. Update the code and show the complete modified
+script. Do not install any packages.
+
+IMPORTANT: Output the complete Python code in a single ```python code block in your response. Do not write it to a file — include it directly in your answer.

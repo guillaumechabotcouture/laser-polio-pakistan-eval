@@ -1,0 +1,8 @@
+Status: FAILED
+Code length: 8331 chars
+---
+  File "/var/folders/ds/vkr9_7597bn716q_854r79l00000gn/T/laser_eval_r2j0zbcx.py", line 187
+    beta_hist[step + 1] = beta_baseline * seasonal_forcing[(step + 1) * dt)
+                                                                          ^
+SyntaxError: closing parenthesis ')' does not match opening parenthesis '['
+

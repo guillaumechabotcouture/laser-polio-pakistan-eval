@@ -1,0 +1,44 @@
+Status: SUCCESS
+Code length: 14133 chars
+---
+Gravity migration network (fraction of population per day):
+            Patch 0     Patch 1     Patch 2     Patch 3
+Patch 0:  0.00000  0.11176  0.02964  0.00860
+Patch 1:  0.05390  0.00000  0.08085  0.01525
+Patch 2:  0.01682  0.09513  0.00000  0.03805
+Patch 3:  0.01203  0.04420  0.09377  0.00000
+Row sums: [0.15 0.15 0.15 0.15]
+
+Initial conditions:
+  Patch 0: N=100,000  S=99,000 (99.0%)  I=1,000 (1.0%)  R=0 (0.0%)
+  Patch 1: N=200,000  S=200,000 (100.0%)  I=0 (0.0%)  R=0 (0.0%)
+  Patch 2: N=150,000  S=150,000 (100.0%)  I=0 (0.0%)  R=0 (0.0%)
+  Patch 3: N=80,000  S=80,000 (100.0%)  I=0 (0.0%)  R=0 (0.0%)
+
+Seasonal profile  (normalised mean = 1.000000)
+  Winter (days 0-90):    1.300× beta  (effective beta = 0.6500)
+  Summer (days 150-240): 0.700× beta  (effective beta = 0.3500)
+
+Running 4-patch SEIR with gravity coupling + seasonal forcing (365 days)...
+Done.
+
+=== Epidemic Summary ===
+  Patch 0 (N=100,000): peak I = 49,968 on day 29 | total infected = 98,576 | attack rate = 99.6%
+  Patch 1 (N=200,000): peak I = 116,396 on day 34 | total infected = 199,679 | attack rate = 99.8%
+  Patch 2 (N=150,000): peak I = 87,658 on day 38 | total infected = 149,661 | attack rate = 99.8%
+  Patch 3 (N=80,000): peak I = 43,506 on day 44 | total infected = 79,585 | attack rate = 99.5%
+
+Sanity check passed: all compartments non-negative
+
+Peak days by patch: [29, 34, 38, 44]
+Spatial coupling check passed: infection wave propagates west → east
+Plot saved → seir_4patch_gravity_seasonal.png
+
+--- stderr ---
+OMP: Info #276: omp_set_nested routine deprecated, please use omp_set_max_active_levels instead.
+
+GravitySEIR_4patch_Seasonal:   0%|          | 0/365 [00:00<?, ?it/s]
+GravitySEIR_4patch_Seasonal:   0%|          | 1/365 [00:00<03:49,  1.59it/s]
+GravitySEIR_4patch_Seasonal:  47%|████▋     | 171/365 [00:00<00:00, 315.46it/s]
+GravitySEIR_4patch_Seasonal: 100%|██████████| 365/365 [00:00<00:00, 454.81it/s]
+

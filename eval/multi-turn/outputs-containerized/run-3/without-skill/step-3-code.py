@@ -1,0 +1,223 @@
+"""
+Four-patch SIR model with gravity-model spatial coupling + seasonal forcing.
+LASER-framework style — runs with numpy only (no extra installs needed).
+
+Patch layout (linear, 75 km spacing):
+    Patch 0 ──75km── Patch 1 ──75km── Patch 2 ──75km── Patch 3
+
+Gravity parameters: k=0.01, a=1, b=1, c=1.5
+Row-normalisation cap: 15 % export fraction per patch per step.
+
+Seasonal forcing (ValuesMap schedule):
+    Days   0–90 : 1.30× baseline  (winter peak)
+    Days  90–150: linear ramp down 1.30→0.70  (spring)
+    Days 150–240: 0.70× baseline  (summer trough)
+    Days 240–365: linear ramp up  0.70→1.30  (autumn→winter)
+"""
+
+import numpy as np
+
+# ── LASER-style ValuesMap ─────────────────────────────────────────────────────
+class ValuesMap:
+    """
+    Piecewise-linear parameter schedule keyed by simulation day.
+
+    Mirrors the LASER ValuesMap interface:
+        vm = ValuesMap({day: value, ...})
+        vm[day]  →  interpolated float
+
+    Anchor points outside the provided range are held constant
+    (edge values are not extrapolated beyond the defined domain).
+    """
+
+    def __init__(self, mapping: dict):
+        days = np.array(sorted(mapping.keys()), dtype=float)
+        vals = np.array([mapping[d] for d in sorted(mapping.keys())], dtype=float)
+        self._days = days
+        self._vals = vals
+
+    def __getitem__(self, day):
+        """Return the linearly-interpolated value at *day*."""
+        return float(np.interp(day, self._days, self._vals))
+
+
+# ── Seasonal-forcing schedule ─────────────────────────────────────────────────
+# Anchor points define the multiplier on the baseline beta.
+seasonal_forcing = ValuesMap({
+      0: 1.3,   # start of winter peak
+     90: 1.3,   # end   of winter peak   → spring ramp begins
+    150: 0.7,   # start of summer trough
+    240: 0.7,   # end   of summer trough → autumn ramp begins
+    365: 1.3,   # back to winter peak (one full annual cycle)
+})
+
+# ── Patch geometry ────────────────────────────────────────────────────────────
+NUM_PATCHES = 4
+SPACING_KM  = 75.0
+positions   = np.arange(NUM_PATCHES) * SPACING_KM   # [0, 75, 150, 225] km
+
+# Pairwise Euclidean distances (km); diagonal is 0
+dist = np.abs(positions[:, None] - positions[None, :])   # shape (4, 4)
+
+# ── Population (initial) ──────────────────────────────────────────────────────
+N = np.array([10_000, 8_000, 12_000, 6_000], dtype=float)
+
+# ── Gravity-model spatial coupling ────────────────────────────────────────────
+# Gravity flow:  G[i,j] = k * N[i]^a * N[j]^b / d[i,j]^c   (i ≠ j)
+k_grav = 0.01
+a_exp  = 1.0
+b_exp  = 1.0
+c_exp  = 1.5
+MAX_EXPORT_FRAC = 0.15   # row-normalisation cap
+
+def build_gravity_coupling(populations, distances, k, a, b, c, max_export_frac):
+    """
+    Return a (n_patches × n_patches) matrix `coupling` where
+    coupling[i, j] is the *fraction* of patch i's population
+    that moves to patch j each time step.
+
+    Steps
+    -----
+    1. Compute raw gravity flows G[i,j] = k * N[i]^a * N[j]^b / d[i,j]^c
+    2. Convert to movement fractions relative to source population.
+    3. Row-normalise: if the total export fraction for patch i exceeds
+       `max_export_frac`, scale every off-diagonal entry in that row down
+       uniformly so the row sum equals exactly `max_export_frac`.
+    """
+    n = len(populations)
+
+    # Raw gravity matrix — avoid division by zero on diagonal (d=0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        G = np.where(
+            distances > 0,
+            k * (populations[:, None] ** a) * (populations[None, :] ** b)
+              / (distances ** c),
+            0.0,
+        )
+
+    # Fraction of source population N[i] that moves to patch j
+    frac = G / populations[:, None]      # frac[i,j] = G[i,j] / N[i]
+
+    # Row-normalise so total export ≤ max_export_frac
+    row_export = frac.sum(axis=1, keepdims=True)   # shape (n, 1)
+    scale = np.where(row_export > max_export_frac,
+                     max_export_frac / row_export,
+                     1.0)
+    frac = frac * scale                            # coupling matrix
+
+    return frac
+
+
+coupling = build_gravity_coupling(N, dist, k_grav, a_exp, b_exp, c_exp, MAX_EXPORT_FRAC)
+
+# ── Report coupling matrix ────────────────────────────────────────────────────
+print("=" * 60)
+print("Gravity coupling matrix  (fraction of source pop → dest)")
+print("=" * 60)
+header = "        " + "".join(f"  Patch {j}" for j in range(NUM_PATCHES))
+print(header)
+for i in range(NUM_PATCHES):
+    row_str = "".join(f"  {coupling[i, j]:.5f}" for j in range(NUM_PATCHES))
+    print(f"Patch {i}{row_str}")
+print()
+print("Row sums (total export fraction per patch):")
+for i in range(NUM_PATCHES):
+    print(f"  Patch {i}: {coupling[i].sum():.5f}  "
+          f"({'capped at 15%' if coupling[i].sum() >= MAX_EXPORT_FRAC - 1e-9 else 'below cap'})")
+print()
+
+# ── SIR disease parameters ────────────────────────────────────────────────────
+beta_baseline = 0.30   # baseline transmission rate  (day⁻¹)
+gamma         = 0.10   # recovery rate               (day⁻¹)
+dt            = 1.0    # time step                   (days)
+T             = 180    # simulation length           (days)
+steps         = int(T / dt)
+
+# ── Initial conditions — seed patch 0 ────────────────────────────────────────
+I = np.array([10.0,  0.0,  0.0,  0.0])
+R = np.zeros(NUM_PATCHES)
+S = N - I - R
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+S_hist    = np.empty((steps + 1, NUM_PATCHES))
+I_hist    = np.empty((steps + 1, NUM_PATCHES))
+R_hist    = np.empty((steps + 1, NUM_PATCHES))
+beta_hist = np.empty(steps + 1)          # track effective beta over time
+S_hist[0]    = S
+I_hist[0]    = I
+R_hist[0]    = R
+beta_hist[0] = beta_baseline * seasonal_forcing[0]
+
+# ── Main simulation loop ──────────────────────────────────────────────────────
+for step in range(steps):
+
+    # Current simulation day and seasonally-adjusted beta
+    day        = step * dt
+    beta_eff   = beta_baseline * seasonal_forcing[day]
+    beta_hist[step] = beta_eff
+
+    # 1. Within-patch SIR transitions (Euler step)
+    new_inf = beta_eff * S * I / N * dt     # force of infection × S
+    new_rec = gamma * I * dt
+
+    S_new = S - new_inf
+    I_new = I + new_inf - new_rec
+    R_new = R + new_rec
+
+    # 2. Gravity-model spatial movement
+    #    For each compartment, outflow[i,j] = coupling[i,j] * X[i]
+    #    Net change for patch i: sum_j inflow[j→i] − sum_j outflow[i→j]
+    def move(X):
+        outflow = coupling * X[:, None]          # (n, n): outflow[i,j] from i
+        net     = outflow.sum(axis=0) - outflow.sum(axis=1)   # inflow − outflow
+        return X + net
+
+    S_new = move(S_new)
+    I_new = move(I_new)
+    R_new = move(R_new)
+
+    # Guard against floating-point negatives
+    S = np.maximum(S_new, 0.0)
+    I = np.maximum(I_new, 0.0)
+    R = np.maximum(R_new, 0.0)
+
+    S_hist[step + 1]    = S
+    I_hist[step + 1]    = I
+    R_hist[step + 1]    = R
+    beta_hist[step + 1] = beta_baseline * seasonal_forcing[(step + 1) * dt)
+
+# ── Seasonal forcing spot-check ───────────────────────────────────────────────
+print("=" * 60)
+print("Seasonal forcing schedule  (ValuesMap spot-check)")
+print("=" * 60)
+print(f"  {'Day':>5}  {'Multiplier':>12}  {'Effective beta':>15}")
+for d in [0, 45, 90, 120, 150, 195, 240, 300, 365]:
+    if d <= T:
+        m = seasonal_forcing[d]
+        print(f"  {d:>5}  {m:>12.4f}  {beta_baseline * m:>15.4f}")
+print()
+
+# ── Summary statistics ────────────────────────────────────────────────────────
+print("=" * 60)
+print("Simulation summary (gravity-coupled 4-patch SIR, seasonal forcing)")
+print("=" * 60)
+print(f"{'Patch':>7}  {'Pop (N)':>9}  {'Peak I':>9}  "
+      f"{'Peak day':>9}  {'Attack rate':>12}")
+for p in range(NUM_PATCHES):
+    peak_val = I_hist[:, p].max()
+    peak_day = int(I_hist[:, p].argmax() * dt)
+    attack   = R_hist[-1, p] / N[p]
+    print(f"{p:>7}  {N[p]:>9.0f}  {peak_val:>9.1f}  "
+          f"{peak_day:>9}  {attack:>11.1%}")
+
+print()
+print("Final compartment totals across all patches:")
+print(f"  S = {S_hist[-1].sum():.1f}")
+print(f"  I = {I_hist[-1].sum():.1f}")
+print(f"  R = {R_hist[-1].sum():.1f}")
+print(f"  N = {(S_hist[-1] + I_hist[-1] + R_hist[-1]).sum():.1f}  "
+      f"(initial N = {N.sum():.1f})")
+
+print()
+print(f"Effective beta range over simulation: "
+      f"{beta_hist.min():.4f} – {beta_hist.max():.4f}")

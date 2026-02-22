@@ -1,0 +1,9 @@
+Status: FAILED
+Code length: 1718 chars
+---
+Traceback (most recent call last):
+  File "/var/folders/ds/vkr9_7597bn716q_854r79l00000gn/T/laser_eval_ylun930t.py", line 2, in <module>
+    ax_agg = axes[1, 2]
+             ^^^^
+NameError: name 'axes' is not defined
+

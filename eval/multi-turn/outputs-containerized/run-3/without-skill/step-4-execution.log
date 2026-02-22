@@ -1,0 +1,45 @@
+Status: SUCCESS
+Code length: 8331 chars
+---
+============================================================
+Gravity coupling matrix  (fraction of source pop → dest)
+============================================================
+          Patch 0  Patch 1  Patch 2  Patch 3
+Patch 0  0.00000  0.08957  0.04750  0.01293
+Patch 1  0.06219  0.00000  0.07462  0.01319
+Patch 2  0.03024  0.06843  0.00000  0.05132
+Patch 3  0.01723  0.02532  0.10744  0.00000
+
+Row sums (total export fraction per patch):
+  Patch 0: 0.15000  (capped at 15%)
+  Patch 1: 0.15000  (capped at 15%)
+  Patch 2: 0.15000  (capped at 15%)
+  Patch 3: 0.15000  (capped at 15%)
+
+============================================================
+Seasonal forcing schedule  (ValuesMap spot-check)
+============================================================
+    Day    Multiplier   Effective beta
+      0        1.3000           0.3900
+     45        1.3000           0.3900
+     90        1.3000           0.3900
+    120        1.0000           0.3000
+    150        0.7000           0.2100
+
+============================================================
+Simulation summary (gravity-coupled 4-patch SIR, seasonal forcing)
+============================================================
+  Patch    Pop (N)     Peak I   Peak day   Attack rate
+      0      10000     2997.6         34        74.5%
+      1       8000     5113.2         33       134.0%
+      2      12000     5062.4         34        97.4%
+      3       6000     2344.7         34        93.1%
+
+Final compartment totals across all patches:
+  S = 551.3
+  I = 0.0
+  R = 35448.7
+  N = 36000.0  (initial N = 36000.0)
+
+Effective beta range over simulation: 0.2100 – 0.3900
+

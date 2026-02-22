@@ -1,0 +1,289 @@
+Here is the code from the previous step:
+
+```python
+#!/usr/bin/env python3
+"""
+SEIR 4-Patch Gravity Model with Seasonal Forcing
+Institute for Disease Modeling – LASER framework demo
+
+Seasonal forcing via ValuesMap:
+  Winter peak  (days 0–90)   : β × 1.3
+  Summer trough(days 150–240): β × 0.7
+  Linear transitions between breakpoints.
+
+Note: ValuesMap is implemented inline below; it is not exported by the
+current public laser.core API (v1.0.0).  The interface — breakpoint
+construction + vm[day] subscript returning the interpolated value — mirrors
+the LASER ValuesMap contract.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ValuesMap – LASER-style piecewise-linear time-varying parameter map
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ValuesMap:
+    """
+    Map from simulation day → parameter multiplier via piecewise-linear
+    interpolation between caller-supplied breakpoints.
+
+    Usage
+    -----
+    vm = ValuesMap(days=[0, 90, 150, 240], values=[1.3, 1.3, 0.7, 0.7])
+    beta_today = beta_baseline * vm[t]   # subscript access at any real day
+
+    Parameters
+    ----------
+    days   : array-like of float  Breakpoint days (must be strictly ascending).
+    values : array-like of float  Multiplier at each breakpoint.
+    """
+
+    def __init__(self, days, values):
+        self._days   = np.asarray(days,   dtype=np.float64)
+        self._values = np.asarray(values, dtype=np.float64)
+        if self._days.shape != self._values.shape:
+            raise ValueError("days and values must have the same length")
+
+    def __getitem__(self, day):
+        """Return the interpolated (clamped) multiplier at *day*."""
+        return float(np.interp(day, self._days, self._values))
+
+    def __call__(self, day):
+        return self.__getitem__(day)
+
+    def as_array(self, days):
+        """Vectorised lookup – returns ndarray of multipliers for *days*."""
+        return np.interp(days, self._days, self._values)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model parameters
+# ─────────────────────────────────────────────────────────────────────────────
+N_PATCHES       = 4
+NTICKS          = 365                    # one calendar year
+DT              = 1                      # days per tick
+
+POPULATIONS     = np.array([500_000, 200_000, 150_000, 100_000], dtype=float)
+BETA_BASELINE   = 0.30                   # baseline transmission rate (/day)
+SIGMA           = 1 / 5.0               # 1 / incubation period (days)
+GAMMA           = 1 / 10.0              # 1 / infectious period (days)
+
+MAX_EXPORT_FRAC = 0.01                   # max daily export fraction per patch
+GRAVITY_K       = 1.0                    # gravity model constant
+
+I0 = 100                                 # seed infectious individuals in patch 0
+
+COLORS = {"S": "#2196F3", "E": "#FF9800", "I": "#F44336", "R": "#4CAF50"}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Seasonal forcing profile using ValuesMap
+#
+#   Breakpoints implement the specified windows exactly:
+#     days   0– 90  → 1.3×  (winter peak, held flat)
+#     days  90–150  → 1.3 → 0.7  (spring decline, linear)
+#     days 150–240  → 0.7×  (summer trough, held flat)
+#     days 240–300  → 0.7 → 1.0  (autumn recovery, linear)
+#     days 300–365  → 1.0 → 1.3  (pre-winter rise, linear)
+# ─────────────────────────────────────────────────────────────────────────────
+seasonal_map = ValuesMap(
+    days   = [  0,  90, 150, 240, 300, 365],
+    values = [1.3, 1.3, 0.7, 0.7, 1.0, 1.3],
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build gravity migration rate matrix
+# ─────────────────────────────────────────────────────────────────────────────
+# Synthetic 2×2 grid of patch centroids (decimal degrees)
+lats = np.array([0.0, 0.0, 1.0, 1.0])
+lons = np.array([0.0, 1.0, 0.0, 1.0])
+
+
+def _haversine_km(i, j):
+    R_earth = 6371.0
+    phi1, phi2 = np.radians(lats[i]), np.radians(lats[j])
+    dphi = np.radians(lats[j] - lats[i])
+    dlam = np.radians(lons[j] - lons[i])
+    a = np.sin(dphi / 2) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlam / 2) ** 2
+    return 2 * R_earth * np.arcsin(np.sqrt(max(a, 1e-12)))
+
+
+dist = np.array([[_haversine_km(i, j) for j in range(N_PATCHES)]
+                 for i in range(N_PATCHES)])
+
+# Gravity: raw flow ∝ Pop_i × Pop_j / dist_ij²
+raw_flow = np.zeros((N_PATCHES, N_PATCHES))
+for i in range(N_PATCHES):
+    for j in range(N_PATCHES):
+        if i != j:
+            raw_flow[i, j] = GRAVITY_K * POPULATIONS[i] * POPULATIONS[j] / dist[i, j] ** 2
+
+# Convert to per-capita daily rates; rescale so total outflow ≤ MAX_EXPORT_FRAC
+mig_rates = np.zeros((N_PATCHES, N_PATCHES))
+for i in range(N_PATCHES):
+    total_out = raw_flow[i].sum()
+    if total_out > 0:
+        scale = min(1.0, MAX_EXPORT_FRAC * POPULATIONS[i] / total_out)
+        for j in range(N_PATCHES):
+            if i != j:
+                mig_rates[i, j] = raw_flow[i, j] / POPULATIONS[i] * scale
+
+# Precompute total per-capita outflow rate for each patch (row sums)
+# Used in the vectorised migration step below.
+mig_out_rates = mig_rates.sum(axis=1)   # shape (N_PATCHES,)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SEIR state arrays  –  shape: (N_PATCHES, NTICKS + 1)
+# ─────────────────────────────────────────────────────────────────────────────
+S = np.zeros((N_PATCHES, NTICKS + 1))
+E = np.zeros((N_PATCHES, NTICKS + 1))
+I = np.zeros((N_PATCHES, NTICKS + 1))
+R = np.zeros((N_PATCHES, NTICKS + 1))
+
+S[0, 0] = POPULATIONS[0] - I0
+I[0, 0] = I0
+for p in range(1, N_PATCHES):
+    S[p, 0] = POPULATIONS[p]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Simulation – deterministic Euler with seasonal β from ValuesMap
+#
+# Performance fix: replace all per-patch Python loops with vectorised NumPy
+# operations.  The original triple-loop over (compartments × patches × patches)
+# inside a 365-step outer loop was the source of the timeout.
+#
+# Migration formula (operator-split, same semantics as original):
+#   For each compartment vector c (shape N_PATCHES):
+#     inflow[i]  = Σ_j  mig_rates[j,i] * c[j]  =  (mig_rates.T @ c)[i]
+#     outflow[i] = Σ_j  mig_rates[i,j] * c[i]  =  mig_out_rates[i] * c[i]
+#     delta[i]   = inflow[i] - outflow[i]
+# ─────────────────────────────────────────────────────────────────────────────
+
+for t in range(NTICKS):
+    # ── Seasonal forcing ─────────────────────────────────────────────────────
+    beta_t = BETA_BASELINE * seasonal_map[t]
+
+    # ── Vectorised SEIR transitions (all patches simultaneously) ─────────────
+    Np     = S[:, t] + E[:, t] + I[:, t] + R[:, t]
+    Np     = np.where(Np > 0, Np, 1.0)          # guard against divide-by-zero
+    foi    = beta_t * I[:, t] / Np
+    new_E  = foi          * S[:, t] * DT
+    new_I  = SIGMA        * E[:, t] * DT
+    new_R  = GAMMA        * I[:, t] * DT
+
+    S[:, t + 1] = S[:, t] - new_E
+    E[:, t + 1] = E[:, t] + new_E - new_I
+    I[:, t + 1] = I[:, t] + new_I - new_R
+    R[:, t + 1] = R[:, t] + new_R
+
+    # ── Vectorised gravity migration (operator-split) ─────────────────────────
+    # mig_rates[i,j] = per-capita rate from patch i → patch j
+    # inflow  for patch i = mig_rates.T @ c   (column sums weighted by source)
+    # outflow for patch i = mig_out_rates[i] * c[i]
+    for comp in (S, E, I, R):
+        c = comp[:, t + 1]
+        comp[:, t + 1] += mig_rates.T @ c - mig_out_rates * c
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Derived totals and summary statistics
+# ─────────────────────────────────────────────────────────────────────────────
+days    = np.arange(NTICKS + 1)
+S_total = S.sum(axis=0)
+E_total = E.sum(axis=0)
+I_total = I.sum(axis=0)
+R_total = R.sum(axis=0)
+
+peak_day         = int(np.argmax(I_total))
+seasonal_factor  = seasonal_map.as_array(days)   # full-year multiplier array
+
+print(f"Peak infectious day  : {peak_day}")
+print(f"Peak total infectious: {I_total[peak_day]:,.0f}")
+print(f"Final attack rate    : {R_total[-1] / POPULATIONS.sum():.1%}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Visualisation – 2 × 3 panel figure
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _shade_seasons(ax):
+    """Overlay semi-transparent winter/summer windows on *ax*."""
+    ax.axvspan(  0,  90, alpha=0.08, color="steelblue", zorder=0)
+    ax.axvspan(150, 240, alpha=0.08, color="gold",      zorder=0)
+
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+fig.suptitle(
+    "SEIR 4-Patch Gravity Model – Seasonal β Forcing  "
+    "(winter ×1.3  days 0–90 · summer ×0.7  days 150–240)",
+    fontsize=13, fontweight="bold",
+)
+
+# ── Per-patch SEIR panels (patches 0–3 fill the four left/centre cells) ──────
+patch_axes = [axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]]
+for p, ax in enumerate(patch_axes):
+    ax.plot(days, S[p] / 1e3, label="S", color=COLORS["S"], lw=1.5)
+    ax.plot(days, E[p] / 1e3, label="E", color=COLORS["E"], lw=1.5)
+    ax.plot(days, I[p] / 1e3, label="I", color=COLORS["I"], lw=1.5)
+    ax.plot(days, R[p] / 1e3, label="R", color=COLORS["R"], lw=1.5)
+    # Secondary axis: seasonal multiplier curve
+    ax2 = ax.twinx()
+    ax2.plot(days, seasonal_factor, color="purple", lw=1, ls=":", alpha=0.6)
+    ax2.set_ylim(0.4, 1.8)
+    ax2.set_ylabel("β scale", fontsize=7, color="purple")
+    ax2.tick_params(axis="y", colors="purple", labelsize=6)
+    _shade_seasons(ax)
+    ax.set_title(f"Patch {p}  (pop {POPULATIONS[p] / 1e3:.0f} k)", fontsize=10)
+    ax.set_xlabel("Day")
+    ax.set_ylabel("Population (thousands)")
+    ax.legend(loc="center right", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(0, NTICKS)
+
+# ── Aggregate panel (bottom-right) ──────────────────────────────────────────
+ax_agg = axes[1, 2]
+ax_agg.plot(days, S_total / 1e3, label="S", color=COLORS["S"], lw=2)
+ax_agg.plot(days, E_total / 1e3, label="E", color=COLORS["E"], lw=2)
+ax_agg.plot(days, I_total / 1e3, label="I", color=COLORS["I"], lw=2)
+ax_agg.plot(days, R_total / 1e3, label="R", color=COLORS["R"], lw=2)
+ax_agg.axvline(peak_day, color="gray", ls="--", lw=1,
+               label=f"I peak day {peak_day}")
+ax_agg.set_title("All Patches Combined", fontsize=11)
+ax_agg.set_xlabel("Day")
+ax_agg.set_ylabel("Population (thousands)")
+ax_agg.legend(loc="center right", fontsize=9)
+ax_agg.grid(True, alpha=0.3)
+ax_agg.set_xlim(0, NTICKS)
+
+# ── Migration rate heatmap (top-right panel, previously unused) ──────────────
+ax_mig = axes[0, 2]
+im = ax_mig.imshow(mig_rates * 100, cmap="YlOrRd", aspect="auto",
+                   vmin=0, vmax=MAX_EXPORT_FRAC * 100)
+ax_mig.set_title("Daily Migration Rates (%)", fontsize=11)
+ax_mig.set_xticks(range(N_PATCHES))
+ax_mig.set_yticks(range(N_PATCHES))
+ax_mig.set_xticklabels([f"P{i}" for i in range(N_PATCHES)], fontsize=9)
+ax_mig.set_yticklabels([f"P{i}" for i in range(N_PATCHES)], fontsize=9)
+ax_mig.set_xlabel("Destination patch", fontsize=9)
+ax_mig.set_ylabel("Origin patch", fontsize=9)
+plt.colorbar(im, ax=ax_mig, label="%/day")
+for i in range(N_PATCHES):
+    for j in range(N_PATCHES):
+        val = mig_rates[i, j] * 100
+        txt_color = "white" if val > MAX_EXPORT_FRAC * 50 else "black"
+        ax_mig.text(j, i, f"{val:.2f}", ha="center", va="center",
+                    fontsize=8, color=txt_color)
+
+plt.tight_layout()
+plt.savefig("seir_4patch_gravity_results.png", dpi=150, bbox_inches="tight")
+print("\nFigure saved: seir_4patch_gravity_results.png")
+plt.show()
+```
+
+Add births (CBR=30 per 1000/year) and deaths (CDR=10 per 1000/year) using
+LASER's BirthsByCBR and MortalityByCDR. Use calc_capacity to pre-allocate for
+10 years. Extend the simulation to 10 years. After running, print the total
+population at the start and end -- does the ~2% annual growth rate look
+correct? Show the complete script. Do not install any packages.
+
+IMPORTANT: Output the complete Python code in a single ```python code block in your response. Do not write it to a file — include it directly in your answer.
