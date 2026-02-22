@@ -2,214 +2,223 @@
 
 Can specialized AI coding skills help Claude Code build epidemiological models
 using a niche simulation framework? This repository provides A/B evaluations
-measuring the impact of a three-skill pipeline on code generation quality when
-building spatial disease transmission models using the
+measuring the impact of a Claude Code
+[skill](https://docs.anthropic.com/en/docs/claude-code/skills) on code
+generation quality when building spatial disease transmission models using the
 [LASER framework](https://laser.idmod.org/).
-
-**Polio test:** WITH skills 60/60 vs WITHOUT 25/60 (42%).
-**Guinea worm stress test:** WITH skills 57/60 vs WITHOUT 29/60 (48%). Zero negative transfer — the skill correctly adapted to a disease it was never designed for (SEIS, dual-host, prevention-only).
-
-See [`eval/guinea-worm/`](eval/guinea-worm/) for the cross-disease stress test.
-
-## Why This Matters
-
-Large language models have broad but shallow knowledge of specialized scientific
-software. The [LASER framework](https://github.com/laser-base/laser-generic)
-(Light Agent Spatial modeling for ERadication) is a niche agent-based disease
-modeling toolkit from the Institute for Disease Modeling. Without guidance,
-Claude correctly uses LASER's basic API but **abandons the framework entirely**
-when complexity increases, falling back to hand-rolled ODE simulations that
-cannot answer the underlying public health questions.
-
-This evaluation quantifies that gap and measures whether Claude Code
-[skills](https://docs.anthropic.com/en/docs/claude-code/skills) — structured
-reference documents loaded into context — can bridge it.
 
 ## Results at a Glance
 
-| Dimension | WITH Skills | WITHOUT Skills | Advantage |
-|-----------|:----------:|:-------------:|:---------:|
-| API Correctness | 3.00 / 3 | 0.60 / 3 | **+2.40** |
-| Structural Correctness | 3.00 / 3 | 1.00 / 3 | **+2.00** |
-| Domain Adaptation | 3.00 / 3 | 1.60 / 3 | **+1.40** |
-| Completeness | 3.00 / 3 | 1.80 / 3 | **+1.20** |
-| **Total (per prompt avg)** | **12 / 12** | **5 / 12** | **+7.00** |
+Four evaluation suites, all run in **Docker-isolated containers** to prevent
+the WITHOUT condition from reading LASER source code:
+
+| Suite | WITH Skill | WITHOUT Skill | Gap |
+|-------|:----------:|:------------:|:---:|
+| **Atomic** (20 API prompts) | 39/40 (97.5%) | 27/40 (67.5%) | +30pp |
+| **Difficulty Curve** (8 levels) | 24/24 (100%) | 17/24 (70.8%) | +29pp |
+| **Reruns — Polio** (15 sessions) | AC 3.0/3 | AC 0.3/3 | +2.7 |
+| **Reruns — Guinea Worm** (15 sessions) | AC 3.0/3 | AC 0.5/3 | +2.5 |
+| **Multi-Turn** (5 steps) | 40/64 quality | 24/64 quality | +16 |
+
+**The skill advantage scales with task complexity:**
+- Simple API recall: **+30 percentage points**
+- Full model building: **+80 percentage points**
 
 ### Key Findings
 
-1. **Framework abandonment is the dominant failure mode.** Without skills,
-   Claude used the LASER API correctly for the simplest prompt but abandoned it
-   from Prompt 2 onward, reimplementing everything as a custom ODE model with
-   polyfill classes. By Prompt 4 (calibration), it produced empty output.
+1. **Framework abandonment is deterministic.** Without the skill, Claude
+   abandons LASER at a consistent complexity threshold (prompt 2 for polio,
+   prompt 3 for guinea worm) and rebuilds in numpy. This reproduces across
+   all 3 statistical runs — it's a capability boundary, not random variance.
 
-2. **Both documented "Critical Gotchas" were validated.** The without-skill
-   code hit both silent failure patterns documented in the skill: wrong
-   birthrate units (daily per-capita instead of per-1000/year) and wrong
-   vaccination mechanism (modifying `susceptibility` instead of `state`). Both
-   produce plausible-looking but quantitatively wrong results with no runtime
-   errors.
+2. **WITH-skill scores AC=3 on every valid output.** Zero variance across
+   48 valid reruns sessions, both diseases. The skill produces perfectly
+   consistent API correctness.
 
-3. **No negative transfer from measles examples.** Despite the skill being
-   originally documented with measles examples (England & Wales), the with-skill
-   outputs correctly adapted to polio: R0=6 (not measles 12-18), 28-day
-   infectious period (not 7-10), OPV at 6 weeks (not MCV1 at 9 months), and
-   monsoon seasonal forcing (not school-term).
+3. **The skill enables cross-disease transfer.** Despite being documented
+   with measles/polio examples, the skill correctly guides guinea worm
+   models (SEIS dynamics, low R0, no vaccination, dry-season forcing).
+   WITHOUT the skill, Claude cannot adapt LASER to novel diseases.
 
-4. **112 vs 11 correct LASER API calls** (10.2x ratio). The with-skill
-   condition made zero API hallucinations across all 5 prompts. The without-skill
-   condition made 11 correct calls (all in Prompt 1), then zero from Prompt 2
-   onward.
+4. **WITHOUT-skill Claude is adaptive, not helpless.** Rather than producing
+   broken LASER code, it rationally pivots to numpy/scipy. This produces
+   running code (3/5 multi-turn steps) but scores zero on API correctness.
 
-5. **4-8 hours vs 2-6 days to production.** An expert modeler could refine the
-   with-skill output into a production-ready calibrated model in hours. The
-   without-skill output would require days of rewriting — a 12x time multiplier.
+5. **The skill is token-efficient.** It produces 40-62% more output (complete
+   code vs summaries) in 30% less wall time on complex tasks.
+
+6. **Spatial coupling APIs are the strongest discriminator.** `gravity()`,
+   `row_normalizer()`, and `calc_capacity()` are where WITHOUT fails hardest
+   — these have non-obvious signatures not in Claude's training data.
 
 ## Evaluation Design
 
-### Three-Skill Pipeline
+### Docker-Isolated A/B Testing
 
-The evaluation tests a pipeline of three Claude Code skills:
+Both conditions run inside Docker containers to ensure clean separation:
 
-| Skill | Purpose | Trigger |
-|-------|---------|---------|
-| **epi-model-parametrization** | Research disease parameters, identify calibration targets, guide model structure | "what parameters do I need", "find R0 for" |
-| **laser-spatial-disease-modeling** | Build spatial SEIR models using LASER, wrap as BaseModel | "LASER model", "spatial disease model" |
-| **modelops-calabaria** | Calibrate, optimize, run scenarios, scale to cloud | "calibrate model", "parameter sweep" |
+- **WITH skill** (`laser-eval-with`): `laser-generic` installed, project
+  directory mounted read-only, skill files accessible
+- **WITHOUT skill** (`laser-eval-without`): Clean container, no LASER packages,
+  no skill files, minimal CLAUDE.md with project context only
 
-### Test Conditions
+```bash
+# Run all suites:
+./eval/docker/run-all-containerized.sh all -j 4
 
-- **WITH skills:** Claude Code session in the project directory with all 3
-  skills accessible, plus existing project code and references
-- **WITHOUT skills:** Claude Code session in a **clean temporary directory**
-  with no `.claude/skills/`, no existing scripts, no LASER-specific knowledge —
-  only a minimal CLAUDE.md establishing the public health context
+# Run a single suite:
+./eval/docker/run-all-containerized.sh atomic -j 8
+./eval/docker/run-all-containerized.sh difficulty
+./eval/docker/run-all-containerized.sh reruns -j 6
+./eval/docker/run-all-containerized.sh multi-turn
+```
 
-### Five Prompts (Increasing Complexity)
+### Four Evaluation Suites
+
+| Suite | Design | Purpose | Sessions |
+|-------|--------|---------|:--------:|
+| **1. Atomic** | 20 isolated API prompts × 2 conditions | Test individual LASER API knowledge | 40 |
+| **2. Reruns** | 5 prompts × 3 runs × 2 diseases × 2 conditions | Statistical reproducibility | 60 |
+| **3. Difficulty** | 8 prompts of increasing complexity × 2 conditions | Map the skill advantage curve | 16 |
+| **4. Multi-Turn** | 5 sequential build steps × 2 conditions × 3 runs | Test iterative model building | 30 |
+
+### Scoring
+
+- **Atomic**: 0-2 per prompt (API correctness)
+- **Difficulty**: 0-3 per prompt (API correctness)
+- **Reruns**: 0-3 per prompt on API Correctness (AC)
+- **Multi-Turn**: 5 dimensions — AC, Structural Correctness, Domain Adaptation,
+  Completeness, Consistency Bonus
+
+### Polio Test Prompts (Reruns Suite)
 
 | # | Prompt | Tests | Difficulty |
 |---|--------|-------|:----------:|
 | 1 | Basic 10-patch SEIR | LASER API, imports, component signatures | Low |
 | 2 | Gravity network + monsoon forcing | `gravity()`, `ValuesMap`, spatial coupling | Medium |
-| 3 | OPV vaccination (RI + SIA) | Immunization API, custom components, OPV waning | Medium-High |
+| 3 | OPV vaccination (RI + SIA) | Custom components, OPV waning | Medium-High |
 | 4 | Calibration framework | Loss functions, AFP surveillance, parameter sampling | High |
 | 5 | Full 20-district integration | End-to-end model with all features | Highest |
 
-### Scoring Rubric
+## Token Efficiency
 
-Each prompt is scored 0-3 on four dimensions (max 12 per prompt, 60 total):
+Output bytes as a proxy for output tokens consumed:
 
-- **API Correctness (AC):** Does the code use real LASER v1.0.0 API?
-- **Structural Correctness (SC):** Is the model assembled correctly?
-- **Domain Adaptation (DA):** Does it adapt to polio (not blindly copy measles)?
-- **Completeness (CO):** Is it runnable code or pseudocode?
+| Suite | WITH avg/prompt | WITHOUT avg/prompt | Ratio |
+|-------|:---------------:|:------------------:|:-----:|
+| Atomic (simple) | 3,542 bytes | 3,523 bytes | **1.00x** |
+| Difficulty D1-D5 | 13,792 bytes | 5,268 bytes | **0.38x** |
+| Reruns (polio) | 10,661 bytes | 6,450 bytes | **0.60x** |
 
-Full rubric: [`eval/rubric.md`](eval/rubric.md)
-
-## Running the Evaluation
-
-### Prerequisites
-
-```bash
-pip install laser-generic    # LASER framework v1.0.0+
-pip install claude-code      # Claude Code CLI (or install via npm)
-```
-
-### Run All Prompts
-
-```bash
-# From the project directory:
-./eval/run-eval.sh all
-
-# Or run a single prompt (both conditions):
-./eval/run-eval.sh 3
-```
-
-The script runs each prompt through two Claude Code sessions:
-1. **WITH skills** — normal session in the project directory
-2. **WITHOUT skills** — session with `--disable-slash-commands` in a clean temp dir
-
-Outputs are saved to `eval/outputs/{with,without}-skill/prompt-N.md`.
-
-### Score the Outputs
-
-Use the rubric in [`eval/rubric.md`](eval/rubric.md) to score each output on
-the four dimensions. The existing scores are in
-[`eval/outputs/ab-test-report.md`](eval/outputs/ab-test-report.md).
+On simple prompts, both conditions produce identical output. On complex tasks,
+WITHOUT produces 35-62% less output — summaries and descriptions instead of
+complete runnable code.
 
 ## Repository Structure
 
 ```
 laser-polio-pakistan-eval/
-├── README.md                          # This file
-├── CLAUDE.md                          # Project context for Claude Code
+├── README.md                              # This file
+├── CLAUDE.md                              # Project context for Claude Code
 │
-├── .claude/skills/                    # The three-skill pipeline under test
-│   ├── laser-spatial-disease-modeling/
-│   │   ├── SKILL.md                   #   LASER model building (Steps 1-8)
-│   │   ├── references/
-│   │   │   ├── laser_api_reference.md #   Complete LASER v1.0.0 API docs
-│   │   │   └── wavelet_analysis.md    #   Wavelet phase analysis guide
-│   │   └── scripts/
-│   │       ├── custom_components.py   #   Importation, VaccinationCampaign
-│   │       ├── calibration_metrics.py #   CCS + wavelet + loss bridge
-│   │       └── laser_basemodel.py     #   BaseModel wrapper template
-│   ├── epi-model-parametrization/
-│   │   └── SKILL.md                   #   Parameter research guide
-│   └── modelops-calabaria/
-│       ├── SKILL.md                   #   Calibration workflow
-│       └── references/
-│           └── modelops_calabaria_reference.md
+├── .claude/skills/                        # The skill pipeline under test
+│   ├── laser-spatial-disease-modeling/    #   LASER model building
+│   ├── epi-model-parametrization/        #   Parameter research guide
+│   └── modelops-calabaria/               #   Calibration workflow
 │
-├── eval/                              # Evaluation framework
-│   ├── prompts.md                     #   Polio: 5 test prompts
-│   ├── rubric.md                      #   Polio: 4-dimension scoring rubric
-│   ├── run-eval.sh                    #   Polio: automated A/B runner
-│   ├── prompt-{1-5}.txt              #   Polio: plain-text prompts
-│   ├── outputs/
-│   │   ├── ab-test-report.md          #   Polio: A/B evaluation report
-│   │   ├── deep-analysis-report.md    #   Polio: API audit + failure taxonomy
-│   │   ├── model-calibration-report.md#   13-district calibration write-up
-│   │   ├── with-skill/                #   WITH skill outputs (5 summaries)
-│   │   ├── without-skill/             #   WITHOUT skill outputs + scripts
-│   │   └── *.png, *.csv              #   Diagnostic plots + data
+├── eval/
+│   ├── docker/
+│   │   ├── Dockerfile                     # Multi-stage: with-laser, without-laser
+│   │   └── run-all-containerized.sh       # Unified parallel runner
 │   │
-│   └── guinea-worm/                   # Cross-disease stress test
-│       ├── README.md                  #   Guinea worm eval documentation
-│       ├── prompts.md                 #   5 prompts (SEIS, dual-host, Chad)
-│       ├── rubric.md                  #   Adapted rubric (SEIS, guinea worm)
-│       ├── run-eval.sh                #   Automated A/B runner
-│       ├── prompt-{1-5}.txt          #   Plain-text prompts
-│       └── outputs/
-│           ├── ab-test-report.md      #   57/60 vs 29/60, zero neg. transfer
-│           ├── with-skill/            #   WITH skill outputs
-│           ├── without-skill/         #   WITHOUT skill outputs
-│           └── *.png                  #   Diagnostic plots
+│   ├── atomic/                            # Suite 1: 20 isolated API prompts
+│   │   ├── prompt-A{01-20}.txt
+│   │   ├── rubric.md
+│   │   └── outputs-containerized/{with,without}-skill/
+│   │
+│   ├── difficulty-curve/                  # Suite 3: 8 complexity levels
+│   │   ├── prompt-D{1-8}.txt
+│   │   ├── rubric.md
+│   │   └── outputs-containerized/
+│   │       ├── analysis.md                #   Scored results + token analysis
+│   │       └── {with,without}-skill/
+│   │
+│   ├── reruns/                            # Suite 2: statistical re-runs
+│   │   ├── analysis.md
+│   │   └── outputs-containerized/
+│   │       ├── polio/run-{1,2,3}/{with,without}-skill/
+│   │       └── guinea-worm/run-{1,2,3}/{with,without}-skill/
+│   │
+│   ├── multi-turn/                        # Suite 4: iterative building
+│   │   ├── run-multi-turn.py              #   5-step sequential driver
+│   │   ├── rubric.md
+│   │   ├── steps.md
+│   │   └── outputs-containerized/
+│   │       ├── analysis.md                #   Scored results + methodology notes
+│   │       └── run-{1,2,3}/{with,without}-skill/
+│   │
+│   ├── prompt-{1-5}.txt                   # Polio prompts (used by reruns)
+│   ├── rubric.md                          # Main 4-dimension rubric
+│   ├── guinea-worm/                       # Guinea worm prompts + outputs
+│   │
+│   └── outputs/
+│       ├── containerized-eval-summary.md  # ★ Full cross-suite analysis
+│       ├── ab-test-report.md              # Original polio A/B report
+│       └── deep-analysis-report.md        # API audit + failure taxonomy
 │
-├── scripts/                           # WITH-skill generated models
-│   ├── polio_seir_basic_10patch.py    #   Polio P1: Basic SEIR
-│   ├── polio_gravity_seasonal.py      #   Polio P2: Gravity + monsoon
-│   ├── polio_seir_10patch.py          #   Polio P3: Full SEIRV with vaccination
-│   ├── calibrate_polio.py             #   Polio P4: LHS calibration framework
-│   ├── polio_seir_20district.py       #   Polio P5: 20-district integration
-│   ├── custom_components.py           #   Polio: shared custom LASER components
-│   ├── polio_calibration.py           #   Polio: alternative calibration script
-│   ├── guinea_worm_components.py      #   GW: 10 custom LASER components
-│   ├── guinea_worm_chad.py            #   GW: dual-host SEIS simulation
-│   ├── guinea_worm_chad_interventions.py # GW: full model with interventions
-│   └── guinea_worm_calibration.py     #   GW: Carter Center data calibration
+├── scripts/                               # WITH-skill generated models
+│   ├── polio_seir_10patch.py              #   Main simulation
+│   ├── custom_components.py               #   Vaccination + importation
+│   └── ...
 │
 └── reference/
-    └── polio-model-requirements.md    # Ground truth domain specification
+    └── polio-model-requirements.md        # Ground truth domain specification
 ```
 
 ## Reports
 
 | Report | Description |
 |--------|-------------|
-| [`eval/outputs/ab-test-report.md`](eval/outputs/ab-test-report.md) | Polio A/B evaluation: 60/60 vs 25/60, framework abandonment pattern |
-| [`eval/outputs/deep-analysis-report.md`](eval/outputs/deep-analysis-report.md) | Deep dive: API usage audit (112 vs 11 calls), failure mode taxonomy |
-| [`eval/outputs/model-calibration-report.md`](eval/outputs/model-calibration-report.md) | 13-district Pakistan polio model calibration against MMWR/GPEI data |
-| [`eval/guinea-worm/outputs/ab-test-report.md`](eval/guinea-worm/outputs/ab-test-report.md) | Guinea worm stress test: 57/60 vs 29/60, zero negative transfer |
+| [`eval/outputs/containerized-eval-summary.md`](eval/outputs/containerized-eval-summary.md) | **Full cross-suite analysis** — accuracy, tokens, timing across all 4 suites |
+| [`eval/difficulty-curve/outputs-containerized/analysis.md`](eval/difficulty-curve/outputs-containerized/analysis.md) | Difficulty curve: flat +1 advantage, no collapse |
+| [`eval/multi-turn/outputs-containerized/analysis.md`](eval/multi-turn/outputs-containerized/analysis.md) | Multi-turn: execution paradox, methodology improvements |
+| [`eval/outputs/ab-test-report.md`](eval/outputs/ab-test-report.md) | Original polio A/B: 60/60 vs 25/60 |
+| [`eval/guinea-worm/outputs/ab-test-report.md`](eval/guinea-worm/outputs/ab-test-report.md) | Guinea worm stress test: 57/60 vs 29/60 |
+
+## Running the Evaluation
+
+### Prerequisites
+
+- Docker Desktop running
+- Claude Code CLI with valid OAuth credentials
+- Generate auth token: `claude setup-token`, save to `~/.claude/oauth-token`
+
+### Quick Start
+
+```bash
+# Build Docker images and run all 4 suites:
+./eval/docker/run-all-containerized.sh all -j 4
+
+# Run individual suites:
+./eval/docker/run-all-containerized.sh atomic -j 8
+./eval/docker/run-all-containerized.sh reruns -j 6
+./eval/docker/run-all-containerized.sh multi-turn
+
+# Run the original (non-containerized) eval:
+./eval/run-eval.sh all
+```
+
+### Verify Results
+
+```bash
+# Check all output files are non-empty:
+find eval/*/outputs-containerized -name "*.md" -empty
+
+# Confirm no laser imports in WITHOUT outputs:
+grep -r 'laser\.' eval/*/outputs-containerized/without-skill/ || echo 'Clean'
+
+# Score using rubrics in each suite directory
+```
 
 ## The LASER Framework
 
@@ -220,7 +229,7 @@ Institute for Disease Modeling (IDM). It provides:
 - **Agent-based SEIR dynamics** with per-agent state tracking
 - **Gravity-model spatial coupling** between geographic patches
 - **Seasonal forcing** via `ValuesMap` time series
-- **Vaccination components** (`RoutineImmunizationEx`, custom campaigns)
+- **Vaccination components** (routine immunization, custom campaigns)
 - **Vital dynamics** (births by CBR, mortality by CDR/estimator)
 
 Install: `pip install laser-generic` (includes `laser-core` and `laser-generic`)
